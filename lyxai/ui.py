@@ -4,8 +4,8 @@ from __future__ import annotations
 import copy
 import json
 
-from PySide6.QtCore import Qt, QTimer, QThread, Signal
-from PySide6.QtGui import QFont, QTextCursor, QIcon
+from PySide6.QtCore import Qt, QTimer, QThread, Signal, QUrl
+from PySide6.QtGui import QFont, QTextCursor, QIcon, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
     QFormLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget,
@@ -630,13 +630,21 @@ class MainWindow(QMainWindow):
         actions.addWidget(button(self.t("预览发送内容", "Preview request"), self.preview))
         actions.addWidget(button(self.t("复制回答", "Copy answer"), self.copy_answer))
         actions.addStretch()
-        self.apply_btn = button(self.t("应用到 LyX 原选区", "Apply to LyX selection"), self.apply_to_lyx, True)
-        self.apply_btn.setToolTip(self.t('应用“待替换正文”中的修改稿，不包含回答解释。', 'Applies the editable Replacement passage, excluding explanations.'))
+        self.apply_btn = button(self.t("应用到 LyX 当前位置", "Apply at LyX position"), self.apply_to_lyx, True)
+        self.apply_btn.setToolTip(self.t('将“待替换正文”应用到 LyX 当前选区；无选区时在当前光标插入。', 'Replaces the current LyX selection with the Replacement passage, or inserts at the current caret.'))
         actions.addWidget(self.apply_btn)
         outer.addLayout(actions)
         self.status = note(self.t("就绪。请先配置 API 模型。", "Ready. Configure an API model to begin."))
         self.status.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        outer.addWidget(self.status)
+        footer = QHBoxLayout()
+        footer.addWidget(self.status, 1)
+        self.copyright_link = QLabel('<a style="color:#176f83;text-decoration:none" href="https://github.com/leyuwei/LyX-AI">© github/leyuwei</a>')
+        self.copyright_link.setTextInteractionFlags(Qt.TextInteractionFlag.LinksAccessibleByMouse | Qt.TextInteractionFlag.LinksAccessibleByKeyboard)
+        self.copyright_link.setAccessibleName('© github/leyuwei')
+        self.copyright_link.setToolTip(self.t('打开插件 GitHub 主页', 'Open the plugin homepage on GitHub'))
+        self.copyright_link.linkActivated.connect(lambda _: QDesktopServices.openUrl(QUrl('https://github.com/leyuwei/LyX-AI')))
+        footer.addWidget(self.copyright_link)
+        outer.addLayout(footer)
         self.follow_btn.setEnabled(bool(self.history))
 
     def fill_profiles(self):
@@ -930,7 +938,7 @@ class MainWindow(QMainWindow):
         self.config.update(auto_context=enabled, context_radius=radius)
         self.status.setText(self.t('正在读取 LyX 当前正文…', 'Reading live LyX body context…'))
         def loaded(result):
-            self.lyx_payload.update(filename=result['filename'], document_hash=result['document_hash'])
+            self.lyx_payload.update(filename=result['filename'])
             if enabled:
                 self.before.setPlainText(result['before'])
                 self.after.setPlainText(result['after'])
@@ -956,13 +964,10 @@ class MainWindow(QMainWindow):
         if not self.lyx_payload or not self.lyx_payload.get('filename'):
             self.status.setText(self.t('未建立 LyX 目标，请从原文右键重新问询。', 'No verified LyX target; open from its context menu again.'))
             return
-        if self.selection.toPlainText() != self.lyx_payload['text']:
-            self.status.setText(self.t('助手中的原文被编辑过，请重新从 LyX 问询后应用。', 'Target was edited in the assistant; capture it again from LyX.'))
-            return
         from .bridge import apply_replacement
         payload, text = self.lyx_payload.copy(), self.replacement.toPlainText()
-        self.status.setText(self.t('正在核对原选区并应用…', 'Verifying selection and applying…'))
+        self.status.setText(self.t('正在应用到 LyX 当前选区或光标…', 'Applying at the current LyX selection or caret…'))
         def applied(result):
-            self.lyx_payload = None
-            self.status.setText(self.t('已应用到 LyX。可在 LyX 撤销（macOS：⌘Z；Windows：Ctrl+Z）；再次修改请重新框选问询。', 'Applied to LyX. Undo in LyX (macOS: ⌘Z; Windows: Ctrl+Z); capture a new selection for further edits.'))
+            action = self.t('已插入当前光标位置。', 'Inserted at the current caret.') if result['mode'] == 'insert' else self.t('已替换当前选区。', 'Replaced the current selection.')
+            self.status.setText(action + self.t(' 可在 LyX 一次撤销（macOS：⌘Z；Windows：Ctrl+Z），也可选择其他位置继续应用。', ' Undo once in LyX (macOS: ⌘Z; Windows: Ctrl+Z), or select another position to apply again.'))
         self.run_bridge(lambda: apply_replacement(payload, text), applied)

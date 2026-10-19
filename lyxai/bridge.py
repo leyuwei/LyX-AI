@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import ctypes
-import hashlib
 from ctypes import wintypes
 import os
 from pathlib import Path
@@ -13,6 +12,7 @@ import time
 import uuid
 
 from .selection import extract_body
+from .errors import LyXCommandError
 
 
 class OVERLAPPED(ctypes.Structure):
@@ -120,7 +120,7 @@ class WindowsLyXServer:
                         token = f'{prefix}{self.client}:{command}:'
                         if reply.startswith(token):
                             if prefix == 'ERROR:':
-                                raise RuntimeError(reply[len(token):])
+                                raise LyXCommandError(reply[len(token):])
                             return reply[len(token):]
             finally:
                 if pending and error == 997:
@@ -172,13 +172,8 @@ def native_body(native):
 
 
 def load_context(payload, stem=None, radius=1800, include_context=True):
-    from .integration import capture_lyx_payload
     with LyXServer(stem or pipe_name(payload.get('lyx_user_dir'))) as server:
         filename = server.command('server-get-filename')
-        server.command('copy')
-        current = capture_lyx_payload()
-        if current['owner_pid'] != payload['owner_pid'] or native_body(current['native']) != native_body(payload['native']):
-            raise ValueError('LyX 选区已切换，请重新问询。 / LyX selection changed.')
         snapshot = server.snapshot()
         # Export must not have switched buffers while acquiring context.
         if server.command('server-get-filename') != filename:
@@ -186,32 +181,40 @@ def load_context(payload, stem=None, radius=1800, include_context=True):
     context = automatic_context(payload['native'], snapshot, radius)
     if not include_context:
         context.update(before='', after='')
-    return dict(filename=filename, document_hash=hashlib.sha256(native_body(snapshot).encode()).hexdigest(), **context)
-
-
-def verify_target(payload, server):
-    from .integration import capture_lyx_payload
-    if server.command('server-get-filename') != payload.get('filename'):
-        raise ValueError('当前 LyX 文档已变化，请回原文重新框选并问询。 / LyX document changed.')
-    server.command('copy')
-    current = capture_lyx_payload()
-    if current.get('owner_pid') != payload.get('owner_pid') or native_body(current['native']) != native_body(payload['native']):
-        raise ValueError('LyX 当前选区已变化，请重新框选原文并问询，未执行覆盖。 / LyX selection changed; nothing replaced.')
+    return dict(filename=filename, **context)
 
 
 def apply_replacement(payload, replacement, stem=None):
+    from .integration import capture_lyx_payload
     from .replacement import replacement_fragment
-    fragment = replacement_fragment(payload['native'], replacement)
     with LyXServer(stem or pipe_name(payload.get('lyx_user_dir'))) as server:
-        current_hash = hashlib.sha256(native_body(server.snapshot()).encode()).hexdigest()
-        if current_hash != payload.get('document_hash'):
-            raise ValueError('问询后 LyX 正文已更改，请重新问询以使用最新原文。 / Document changed after capture; capture it again.')
-        verify_target(payload, server)
+        if not payload.get('filename') or server.command('server-get-filename') != payload['filename']:
+            raise ValueError('当前 LyX 文档已变化，请回原文或从新文档重新问询。 / LyX document changed; return to the original document or ask from the new one.')
+        try:
+            server.command('copy')
+        except LyXCommandError:
+            # LyX disables Copy at a caret. Never read the stale clipboard here;
+            # transport failures still propagate instead of becoming insertions.
+            layout = server.command('server-get-layout')
+            if not layout or any(c in layout for c in '\r\n\\\0'):
+                raise ValueError('Unsupported LyX layout')
+            snapshot = server.snapshot()
+            template = snapshot.split(r'\begin_body', 1)[0] + '\\begin_body\n\\begin_layout ' + layout + '\n\\end_layout\n\\end_body\n\\end_document\n'
+            mode = 'insert'
+        else:
+            current = capture_lyx_payload()
+            if current.get('owner_pid') != payload.get('owner_pid'):
+                raise ValueError('LyX process changed; nothing replaced / LyX 进程已变化，未执行覆盖')
+            template = current['native']
+            mode = 'replace'
+        fragment = replacement_fragment(template, replacement)
         set_native_clipboard(fragment, replacement)
+        # Also provides a LyX event-loop turn to observe the new clipboard
+        # before Paste reads Qt's cached MIME data.
         if server.command('server-get-filename') != payload['filename']:
             raise ValueError('LyX document changed; nothing replaced')
         server.command('paste')
-    return {'applied': True}
+    return {'applied': True, 'mode': mode}
 
 
 def set_native_clipboard(native, text):

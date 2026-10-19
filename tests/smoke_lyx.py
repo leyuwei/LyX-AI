@@ -139,15 +139,48 @@ def worker(desktop):
                 assert native_body(restored) == native_body(baseline), 'Undo did not restore original body'
                 print('One undo restores complete original body: OK')
                 server.command('buffer-begin')
+                server.command('paragraph-select')
+                result = apply_replacement(payload, 'Latest selection $z=2$.', stem)
+                assert result['mode'] == 'replace'
+                changed = server.snapshot()
+                assert 'Context BEFORE:' not in changed and 'Latest selection' in changed, native_body(changed)
+                assert 'Target passage:' in changed and 'Context AFTER:' in changed
+                server.command('undo')
+                assert native_body(server.snapshot()) == native_body(baseline)
+                print('Changed selection is replaced; original query target untouched; one undo: OK')
+                server.command('buffer-begin')
+                result = apply_replacement(payload, r'Inserted at caret $q^2$. \[v=3\]', stem)
+                assert result['mode'] == 'insert'
+                changed = server.snapshot()
+                assert 'Inserted at caret' in changed
+                assert changed.index('Inserted at caret') < changed.index('Context BEFORE:')
+                assert 'Target passage:' in changed and 'DO NOT SEND THIS NOTE' in changed and 'DO NOT SEND THIS FOOTNOTE' in changed
+                assert changed.count(r'\begin_inset Formula') == 2
+                server.command('undo')
+                assert native_body(server.snapshot()) == native_body(baseline)
+                print('Caret insertion preserves surrounding prose/objects with native equations; one undo: OK')
+                server.command('buffer-begin')
+                server.command('self-insert', 'User edit. ')
+                edited = server.snapshot()
+                result = apply_replacement(payload, 'Revision after user edit. ', stem)
+                assert result['mode'] == 'insert'
+                assert 'User edit.' in server.snapshot()
+                server.command('undo')
+                assert native_body(server.snapshot()) == native_body(edited)
+                print('Intervening document edit accepted and survives undo of application: OK')
+                other_doc = folder / 'other.lyx'
+                shutil.copy2(doc, other_doc)
+                server.command('file-open', str(other_doc).replace('\\', '/'))
                 try:
                     apply_replacement(payload, revised, stem)
-                except (RuntimeError, ValueError):
+                except ValueError as exc:
+                    assert 'document changed' in str(exc)
                     pass
                 else:
-                    raise AssertionError('Changed selection was not refused')
-                assert native_body(server.snapshot()) == native_body(baseline)
+                    raise AssertionError('Other document was overwritten')
+                assert 'Revision after' not in server.snapshot()
                 assert doc.read_bytes() == original_disk
-                print('Wrong-selection refusal and source file unchanged: OK')
+                print('Other-document refusal and source file unchanged: OK')
         finally:
             proc.terminate()
             proc.wait(timeout=5)

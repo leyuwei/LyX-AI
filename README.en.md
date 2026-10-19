@@ -10,7 +10,7 @@
 
 ## From selection to revision, inside your writing workflow
 
-Select a passage in the LyX document body and open the assistant from the context menu. Surrounding prose is collected automatically. Review the context, choose a prompt and model, read the suggestions, and apply the revision to the original selection.
+Select a passage in the LyX document body and open the assistant from the context menu. Surrounding prose is collected automatically. Review the context, choose a prompt and model, read the suggestions, and apply the revision to the current LyX selection or caret.
 
 **Select prose → Collect context → Ask AI → Preview text and equations → Apply the revision**
 
@@ -21,7 +21,7 @@ Select a passage in the LyX document body and open the assistant from the contex
 | **Markdown and math preview** | Read headings, lists, tables and equations in an offline preview before using the revision. |
 | **Your models and relay services** | Separate profiles for endpoints, protocols, keys, models, generation settings, reasoning, proxies and timeouts. |
 | **Prompts for writing tasks** | Edit or save templates for academic editing, proofreading, concision, logical flow, equations and translation; continue with follow-up questions. |
-| **Reviewable, undoable changes** | Inspect the outgoing request, verify the source selection before applying, and undo the replacement in LyX with one action. |
+| **Reviewable, undoable changes** | Inspect the outgoing request, choose the current selection or caret as the destination, and undo the application in LyX with one action. |
 
 ## Connect your own models
 
@@ -35,12 +35,12 @@ Keep official endpoints and relay configurations in separate profiles. Configure
 
 ## Revise prose and equations together
 
-Applicable revisions are placed in a separate, editable **Replacement** area. Review or edit the passage, preview it, then use **Apply to LyX selection** in the global bottom toolbar, available from every tab.
+Applicable revisions are placed in a separate, editable **Replacement** area. Review or edit the passage, preview it, then use **Apply at LyX position** in the global bottom toolbar, available from every tab.
 
 - Supports inline math, single-line displayed equations and multiline alignment, including standalone `align` and `aligned` environments.
 - Keeps the target passage separate from preceding and following context, so the requested editing scope is clear.
 - Converts `\eqref{…}`, `\ref{…}` and `\cite{…}` into native LyX objects so the document resolves their numbers and citations.
-- Refuses an overwrite if the document or selection has changed. Applying replaces the entire original selection, including selected Note/Footnote and other non-body objects; one undo restores them.
+- Uses the latest destination: replaces the current selection or inserts at the current caret. You may move the selection or edit the same document while waiting; switching documents blocks writeback. Replacing a selection removes selected Note/Footnote and other non-body objects; one undo restores them.
 - Follows the LyX UI language for context-menu labels. The assistant has its own persistent Chinese/English language setting.
 
 ## A local companion with a visible sending scope
@@ -76,3 +76,7 @@ python main.py --configure
 - [Usage, prompts and model parameters — Chinese](docs/USER-GUIDE.zh-CN.md)
 - [Testing, verification and supported scope — Chinese](docs/TESTING.zh-CN.md)
 - [Third-party components and licenses](docs/THIRD-PARTY.md)
+
+---
+
+© [github/leyuwei](https://github.com/leyuwei/LyX-AI)

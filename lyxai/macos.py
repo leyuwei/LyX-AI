@@ -10,6 +10,7 @@ import time
 import uuid
 
 from .selection import extract_body
+from .errors import LyXCommandError
 
 LYX_TYPE = 'com.trolltech.anymime.application--x-lyx'
 
@@ -29,8 +30,8 @@ def capture_payload():
     selection = extract_body(native)
     if len(selection.text) > 2_000_000:
         raise ValueError('Selection too large / 选区过长，请分段问询')
-    # macOS exposes no clipboard owner PID; writeback verifies the live native
-    # selection, filename and document hash through the selected LyX server.
+    # macOS exposes no clipboard owner PID; writeback checks the buffer filename
+    # and uses the live selection/caret through the selected LyX server.
     return dict(text=selection.text, excluded=selection.excluded, native=native, owner_pid=0)
 
 
@@ -160,6 +161,6 @@ class MacLyXServer:
                     token = f'{prefix}{self.client}:{command}:'
                     if reply.startswith(token):
                         if prefix == 'ERROR:':
-                            raise RuntimeError(reply[len(token):])
+                            raise LyXCommandError(reply[len(token):])
                         return reply[len(token):]
         raise TimeoutError('LyX response timed out; close modal dialogs / LyX 响应超时，请关闭模态对话框')

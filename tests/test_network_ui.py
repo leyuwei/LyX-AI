@@ -8,6 +8,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 from PySide6.QtCore import QEventLoop, QTimer
 from PySide6.QtWidgets import QApplication, QDialog
@@ -228,6 +229,31 @@ class NetworkTests(unittest.TestCase):
 
 
 class DialogTests(unittest.TestCase):
+    def test_copyright_opens_homepage_in_both_languages(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            w = MainWindow('Original', Store(Path(tmp)))
+            for lang in ('zh', 'en'):
+                choose(w.language, lang)
+                self.assertIn('github/leyuwei', w.copyright_link.text())
+                with patch('lyxai.ui.QDesktopServices.openUrl') as open_url:
+                    w.copyright_link.linkActivated.emit('https://github.com/leyuwei/LyX-AI')
+                    self.assertEqual(open_url.call_args.args[0].toString(), 'https://github.com/leyuwei/LyX-AI')
+            w.close()
+
+    def test_apply_accepts_edited_source_and_can_be_reused_at_new_position(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            w = MainWindow('Original', Store(Path(tmp)))
+            w.lyx_payload = dict(filename='doc.lyx', text='Original')
+            w.selection.setPlainText('Edited in assistant')
+            w.replacement.setPlainText('Revision')
+            with patch('lyxai.bridge.apply_replacement', return_value={'applied': True, 'mode': 'insert'}) as apply:
+                with patch.object(w, 'run_bridge', side_effect=lambda fn, success: success(fn())):
+                    w.apply_to_lyx()
+                    w.apply_to_lyx()
+                self.assertEqual(apply.call_count, 2)
+                self.assertEqual(w.lyx_payload['filename'], 'doc.lyx')
+            w.close()
+
     def test_global_apply_button_and_language_persist_after_reopening(self):
         with tempfile.TemporaryDirectory() as tmp:
             folder = Path(tmp)

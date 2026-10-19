@@ -95,15 +95,22 @@ def check():
                     server.command('undo')
                     assert native_body(server.snapshot()) == native_body(baseline)
                     server.command('buffer-begin')
-                    try:
-                        apply_replacement(payload, revised, stem)
-                    except (RuntimeError, ValueError):
-                        pass
-                    else:
-                        raise AssertionError('Changed selection was not refused')
+                    server.command('paragraph-select')
+                    assert apply_replacement(payload, 'Latest selection $z=2$.', stem)['mode'] == 'replace'
+                    changed = server.snapshot()
+                    assert 'Latest selection' in changed and 'Context BEFORE:' not in changed
+                    assert 'Target passage:' in changed
+                    server.command('undo')
+                    assert native_body(server.snapshot()) == native_body(baseline)
+                    server.command('buffer-begin')
+                    assert apply_replacement(payload, r'Caret insertion $q^2$. \[v=3\]', stem)['mode'] == 'insert'
+                    changed = server.snapshot()
+                    assert changed.index('Caret insertion') < changed.index('Context BEFORE:')
+                    assert 'Target passage:' in changed and changed.count(r'\begin_inset Formula') == 2
+                    server.command('undo')
                     assert native_body(server.snapshot()) == native_body(baseline)
                     assert doc.read_bytes() == original
-                    print('Single undo + changed-selection refusal + source file unchanged: OK')
+                    print('Latest selection + caret insertion + single undo + source file unchanged: OK')
                     references = folder / 'references.lyx'
                     shutil.copy2(ROOT / 'tests/references-demo.lyx', references)
                     server.command('file-open', str(references))
