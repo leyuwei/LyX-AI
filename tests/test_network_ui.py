@@ -96,6 +96,12 @@ class Handler(BaseHTTPRequestHandler):
 
 
 class NetworkTests(unittest.TestCase):
+    def setUp(self):
+        # Real browser creation/rendering is exercised once in smoke_ui.py.
+        patcher = patch('lyxai.ui.RichPreview.prepare')
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     @classmethod
     def setUpClass(cls):
         cls.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -211,6 +217,25 @@ class NetworkTests(unittest.TestCase):
             self.wait_window(w)
             self.assertEqual(len(w.history), 4)
             self.assertEqual(Handler.requests[-1][1]["messages"][-1]["content"], "Please explain why.")
+            saved = w.archive.get(w.session['id'])
+            self.assertEqual(len(saved['turns']), 2)
+            self.assertEqual(len(saved['messages']), 4)
+            self.assertEqual(saved['turns'][-1]['answer'], w.answer_text)
+            w.close()
+
+    def test_failed_request_is_archived_without_returned_api_secret(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(Path(tmp))
+            cfg = store.load()
+            cfg['profiles'][0].update(url=self.base + '/auth-error', protocol='chat', api_key='SECRET-TEST')
+            store.save(cfg)
+            w = MainWindow('Question body', store)
+            w.send()
+            self.wait_window(w)
+            turn = w.archive.get(w.session['id'])['turns'][0]
+            self.assertEqual(turn['status'], 'error')
+            self.assertIn('401', turn['error'])
+            self.assertNotIn('SECRET-TEST', w.archive.path.read_bytes().decode('utf-8', 'ignore'))
             w.close()
 
     def wait_window(self, w):
@@ -229,6 +254,11 @@ class NetworkTests(unittest.TestCase):
 
 
 class DialogTests(unittest.TestCase):
+    def setUp(self):
+        patcher = patch('lyxai.ui.RichPreview.prepare')
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_copyright_opens_homepage_in_both_languages(self):
         with tempfile.TemporaryDirectory() as tmp:
             w = MainWindow('Original', Store(Path(tmp)))

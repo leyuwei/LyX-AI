@@ -27,7 +27,7 @@ def capture_payload():
         native = bytes(data).rstrip(b'\0').decode('utf-8-sig')
         if board.changeCount() != revision:
             raise ValueError('Clipboard changed; retry / 剪贴板已变化，请重试')
-    selection = extract_body(native)
+    selection = extract_body(native, include_ert=True)
     if len(selection.text) > 2_000_000:
         raise ValueError('Selection too large / 选区过长，请分段问询')
     # macOS exposes no clipboard owner PID; writeback checks the buffer filename
@@ -41,9 +41,10 @@ def set_clipboard(native, text):
     from Foundation import NSData
     with objc.autorelease_pool():
         item = NSPasteboardItem.alloc().init()
-        raw = native.encode('utf-8')
-        if not item.setData_forType_(NSData.dataWithBytes_length_(raw, len(raw)), LYX_TYPE):
-            raise RuntimeError('Cannot prepare LyX clipboard')
+        if native is not None:
+            raw = native.encode('utf-8')
+            if not item.setData_forType_(NSData.dataWithBytes_length_(raw, len(raw)), LYX_TYPE):
+                raise RuntimeError('Cannot prepare LyX clipboard')
         item.setString_forType_(text, NSPasteboardTypeString)
         board = NSPasteboard.generalPasteboard()
         board.clearContents()

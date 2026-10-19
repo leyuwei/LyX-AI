@@ -84,7 +84,8 @@ def new_profile(provider="OpenAI") -> dict:
 def default_config() -> dict:
     p = new_profile()
     return dict(version=1, language="zh", profiles=[p], active=p["id"], reply_language="中文",
-                templates=builtin_templates(), template_index=0)
+                templates=builtin_templates(), template_index=0, auto_context=True,
+                context_radius=1800, ui_state={})
 
 
 def json_object(text: str, label="JSON") -> dict:

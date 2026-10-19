@@ -14,6 +14,76 @@ MATH = re.compile(r'(?<!\\)(\$\$(.+?)\$\$|\\\[(.+?)\\\]|\\\((.+?)\\\)|\$(?!\$)([
 REF_COMMANDS = r'eqref|ref|pageref|vref|vpageref|nameref|prettyref|formatted|labelonly'
 CITE_COMMANDS = r'cite|citep|citet|citealt|citealp|citeauthor|citeyear|citeyearpar|parencite|textcite|autocite|footcite|smartcite|supercite|Citep|Citet|Citeauthor|Parencite|Textcite|Autocite'
 REFERENCE = re.compile(r'(?<!\\)\\(' + REF_COMMANDS + '|' + CITE_COMMANDS + r')(\*)?\s*(?:\[([^\[\]\r\n]*)\]\s*)?(?:\[([^\[\]\r\n]*)\]\s*)?\{([^{}\r\n]*)\}')
+THEOREMS = {'theorem': 'thm', 'lemma': 'lem', 'corollary': 'cor', 'proposition': 'prop',
+            'definition': 'defn', 'remark': 'rem', 'example': 'example', 'proof': 'proof',
+            'claim': 'claim', 'conjecture': 'conjecture', 'fact': 'fact'}
+UNSAFE_TEX = re.compile(r'\\(?:input|include|includegraphics|write\d*|openout|openin|read|catcode|csname|usepackage|documentclass|special|href|url|directlua|latelua|def|gdef|edef|xdef|let|newcommand|renewcommand)(?![A-Za-z])|\\(?:begin|end)_[A-Za-z]+|\\(?:begin|end)\{document\}', re.I)
+
+
+def latex_input(text, document):
+    """Use LyX's own LaTeX importer for structure and text formatting commands."""
+    source = re.fullmatch(r'\s*```(?:latex|tex)\s*\n([\s\S]*?)\n```\s*', text)
+    text = source[1] if source else text
+    if not source and re.search(r'(?m)^\s*(?:```|~~~)', text):
+        return None
+    # Math and references already have a lossless native serializer. Other TeX
+    # commands require the native importer, not escaped backslashes in prose.
+    outside_math = ''.join(part for part in math_parts(text) if isinstance(part, str) and not part.startswith(('`', '~~~')))
+    if not source and not re.search(r'(?<!\\)\\(?:begin\{|(?:textbf|textit|texttt|emph|underline|section\*?|subsection\*?|subsubsection\*?|paragraph\*?|label|footnote)\s*\{)', outside_math):
+        return None
+    validate_tex(text)
+    stack = []
+    for token in re.finditer(r'(?<!\\)\\(begin|end)\{([\w*]+)\}', re.sub(r'(?m)(?<!\\)%[^\n]*', '', text)):
+        if token[1] == 'begin':
+            stack.append(token[2])
+        elif not stack or stack.pop() != token[2]:
+            raise ValueError('LaTeX 环境不匹配。 / Unbalanced LaTeX environment.')
+    if stack:
+        raise ValueError('LaTeX 环境不完整。 / Incomplete LaTeX environment.')
+    environments = re.findall(r'\\begin\{([\w*]+)\}', outside_math)
+    if any(env.rstrip('*') in set(THEOREMS) | set(THEOREMS.values()) for env in environments):
+        modules = re.search(r'\\begin_modules\n([\s\S]*?)\\end_modules', document)
+        has_theorems = modules and 'theorems-' in modules[1]
+        known_layout = any('\\begin_layout ' + name.title() in document for name in THEOREMS)
+        builtin_class = re.search(r'\\textclass (?:beamer|amsart|amsbook|svmono|svmult)\b', document)
+        if not (has_theorems or known_layout or builtin_class):
+            raise ValueError('请在 LyX 文档设置→模块中启用 AMS Theorems 后应用定理环境。 / Enable AMS Theorems in LyX Document Settings → Modules before applying theorem environments.')
+        if has_theorems:
+            text = re.sub(r'\\(begin|end)\{(' + '|'.join(THEOREMS) + r')(\*?)\}', lambda m: '\\' + m[1] + '{' + THEOREMS[m[2]] + m[3] + '}', text)
+    # A standalone aligned/split block needs a display hull in imported LaTeX.
+    return ''.join(formula_source(part) if isinstance(part, Math) else part for part in math_parts(text))
+
+
+def validate_tex(text):
+    if not text.strip() or len(text) > 200_000 or '\0' in text:
+        raise ValueError('LaTeX is empty or too long / LaTeX 为空或过长')
+    if UNSAFE_TEX.search(text):
+        raise ValueError('LaTeX 包含不支持的文件、链接、宏定义或执行命令。 / Unsupported file, link, macro definition or execution command in LaTeX.')
+
+
+def source_destination(native):
+    body = native.split(r'\begin_body', 1)[1].split(r'\end_body', 1)[0]
+    spans = list(body_insets(body))
+    outer = body
+    for start, end, raw in reversed(spans):
+        outer = outer[:start] + outer[end:]
+    layouts = re.findall(r'\\begin_layout ([^\n]+)', outer)
+    if layouts and set(layouts) == {'Plain Layout'}:
+        return 'interior'
+    if len(spans) == 1 and spans[0][2].startswith('\\begin_inset ERT\n') and not re.sub(r'(?m)^\\[^\n]*|\s+', '', outer):
+        return 'object'
+    return None
+
+
+def source_fragment(original, replacement, destination):
+    """Keep editable ERT source as source, including real TeX line breaks."""
+    source = re.fullmatch(r'\s*```(?:latex|tex)\s*\n([\s\S]*?)\n```\s*', replacement)
+    replacement = source[1] if source else replacement
+    validate_tex(replacement)
+    paragraphs = ''.join('\\begin_layout Plain Layout\n' + line.replace('\\', '\n\\backslash\n') + '\n\\end_layout\n' for line in replacement.split('\n'))
+    if destination == 'object':
+        paragraphs = '\\begin_layout Standard\n\\begin_inset ERT\nstatus open\n\n' + paragraphs + '\\end_inset\n\\end_layout\n'
+    return original.split(r'\begin_body', 1)[0] + '\\begin_body\n' + paragraphs + '\\end_body\n\\end_document\n'
 
 
 def body_insets(body):

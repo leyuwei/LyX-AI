@@ -4,7 +4,7 @@
 
 ## 安装
 
-1. 完整解压 `LyXAI-0.3.1-macOS-universal2.zip`，保存文档并退出 LyX 和助手。
+1. 完整解压 `LyXAI-<版本>-macOS-universal2.zip`，保存文档并退出 LyX 和助手。
 2. 双击 `Install-macOS.command`，也可以在终端执行 `bash Install-macOS.command`。
 3. 正常启动 LyX，在主正文选取文字，右键选择“问询 AI / Ask AI…”；在助手内配置自己的接口和密钥。
 4. 检查待替换正文后应用；在 LyX 使用 **⌘Z** 撤销。
@@ -44,8 +44,8 @@ python3 -m venv .venv
 构建脚本生成应用图标、打包完整运行时、写入版本信息、执行 ad-hoc 签名并检查签名，输出：
 
 - `dist/LyXAI.app`
-- `dist/LyXAI-0.3.1-macOS-universal2.zip`
-- `dist/LyXAI-0.3.1-macOS-universal2.zip.sha256`
+- `dist/LyXAI-<版本>-macOS-universal2.zip`
+- `dist/LyXAI-<版本>-macOS-universal2.zip.sha256`
 
 ZIP 包含应用、安装/卸载脚本、文档、示例、项目许可证和 `BUILD-DEPENDENCIES.txt`。发布时上传 ZIP 和 SHA-256 文件。ZIP 与应用均位于被 Git 忽略的 `dist/` 中。
 

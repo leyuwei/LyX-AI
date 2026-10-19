@@ -181,6 +181,91 @@ def worker(desktop):
                 assert 'Revision after' not in server.snapshot()
                 assert doc.read_bytes() == original_disk
                 print('Other-document refusal and source file unchanged: OK')
+                regions = folder / 'regions.lyx'
+                shutil.copy2(ROOT / 'examples/regions-demo.lyx', regions)
+                region_disk = regions.read_bytes()
+                server.command('file-open', str(regions).replace('\\', '/'))
+                baseline_regions = server.snapshot()
+                server.command('command-sequence', 'buffer-begin; paragraph-down; paragraph-select; copy')
+                region_payload = capture_lyx_payload()
+                region_payload.update(load_context(region_payload, stem))
+                apply_replacement(region_payload, r'Revised theorem $x=2$. \[y=3\]', stem)
+                changed = server.snapshot()
+                assert '\\begin_layout Theorem\nRevised theorem' in changed
+                server.command('command-sequence', 'buffer-begin; buffer-end-select; copy')
+                assert 'theorem_label' in clipboard_html()
+                server.command('undo')
+                assert native_body(server.snapshot()) == native_body(baseline_regions)
+                server.command('command-sequence', 'buffer-begin; paragraph-down; paragraph-select')
+                apply_replacement(region_payload, r'\begin{theorem}[Bound]\label{thm:bound}\textbf{New theorem} $x=2$.\end{theorem}', stem)
+                changed = server.snapshot()
+                assert r'\begin_inset Argument 1' in changed and r'\begin_inset CommandInset label' in changed
+                assert r'\series bold' in changed and r'\begin_layout Theorem' in changed
+                assert r'\backslash' not in native_body(changed).split(r'\begin_layout Lemma')[0]
+                server.command('command-sequence', 'buffer-begin; buffer-end-select; copy')
+                rendered = clipboard_html()
+                assert 'theorem_label' in rendered and 'New theorem' in rendered and 'thm_bound' in rendered
+                latex = folder / 'regions-export.tex'
+                server.command('buffer-export', 'pdflatex ' + str(latex).replace('\\', '/'))
+                exported = latex.read_text(encoding='utf-8-sig')
+                assert r'\begin{thm}[Bound]' in exported and r'\label{thm:bound}' in exported, exported
+                server.command('undo')
+                assert native_body(server.snapshot()) == native_body(baseline_regions)
+                server.command('command-sequence', 'buffer-begin; paragraph-down; paragraph-down; paragraph-select')
+                apply_replacement(region_payload, r'\begin{lemma}\textit{New lemma} $z=5$.\end{lemma}', stem)
+                changed = server.snapshot()
+                assert '\\begin_layout Lemma\n' in changed and r'\shape italic' in changed
+                server.command('command-sequence', 'buffer-begin; buffer-end-select; copy')
+                rendered = clipboard_html()
+                assert 'lemma_label' in rendered and 'New lemma' in rendered
+                server.command('undo')
+                assert native_body(server.snapshot()) == native_body(baseline_regions)
+                print('Theorem/Lemma layouts, LaTeX environments, title/label/fonts and math render natively; one undo: OK')
+                server.command('command-sequence', 'buffer-begin; paragraph-select')
+                apply_replacement(region_payload, r'\section{Imported heading}\textbf{Bold body} and \emph{emphasis} $b=1$.', stem)
+                changed = server.snapshot()
+                assert r'\begin_layout Section' in changed and r'\series bold' in changed and r'\emph on' in changed
+                server.command('undo')
+                assert native_body(server.snapshot()) == native_body(baseline_regions)
+                print('LaTeX headings, emphasis and formulas import as native structures: OK')
+                server.command('command-sequence', 'buffer-begin; paragraph-down; paragraph-down; paragraph-down; paragraph-select; copy')
+                source_payload = capture_lyx_payload()
+                assert r'\textbf{Old source}' in source_payload['text'], source_payload['text']
+                source_payload.update(load_context(source_payload, stem))
+                apply_replacement(source_payload, r'\textbf{New source $s=4$}', stem)
+                latex = folder / 'regions-source-export.tex'
+                server.command('buffer-export', 'pdflatex ' + str(latex).replace('\\', '/'))
+                exported = latex.read_text(encoding='utf-8-sig')
+                assert r'\textbf{New source $s=4$}' in exported, exported
+                assert 'Body before regions.' in exported and 'Body after regions.' in exported
+                server.command('undo')
+                assert native_body(server.snapshot()) == native_body(baseline_regions)
+                server.command('command-sequence', 'buffer-begin; paragraph-down; paragraph-down; paragraph-down; char-forward')
+                assert server.command('server-get-layout') == 'Plain Layout'
+                server.command('paragraph-select')
+                apply_replacement(source_payload, r'\emph{Interior source $u=7$}', stem)
+                latex = folder / 'regions-interior-export.tex'
+                server.command('buffer-export', 'pdflatex ' + str(latex).replace('\\', '/'))
+                assert r'\emph{Interior source $u=7$}' in latex.read_text(encoding='utf-8-sig'), latex.read_text(encoding='utf-8-sig')
+                server.command('undo')
+                assert native_body(server.snapshot()) == native_body(baseline_regions)
+                server.command('command-sequence', 'buffer-begin; paragraph-down; paragraph-down; paragraph-down; char-forward')
+                assert apply_replacement(source_payload, r'\textit{Prefix} ', stem)['mode'] == 'insert'
+                latex = folder / 'regions-source-caret.tex'
+                server.command('buffer-export', 'pdflatex ' + str(latex).replace('\\', '/'))
+                exported = latex.read_text(encoding='utf-8-sig')
+                assert r'\textit{Prefix}' in exported and r'\textbf{Old source}' in exported
+                server.command('undo')
+                assert native_body(server.snapshot()) == native_body(baseline_regions)
+                assert regions.read_bytes() == region_disk
+                print('Whole ERT, source interior replacement and caret insertion export real LaTeX; one undo: OK')
+                engine = shutil.which('pdflatex')
+                if engine:
+                    for name in ('regions-export.tex', 'regions-source-export.tex'):
+                        result = subprocess.run([engine, '-interaction=nonstopmode', '-halt-on-error', '-no-shell-escape', name], cwd=folder, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=20, creationflags=0x08000000)
+                        assert result.returncode == 0, result.stdout.decode('utf-8', 'replace')[-3000:]
+                        assert (folder / name.replace('.tex', '.pdf')).exists()
+                    print('Native theorem title/label and ERT formulas compile to PDF with shell escape disabled: OK')
         finally:
             proc.terminate()
             proc.wait(timeout=5)

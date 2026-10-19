@@ -30,7 +30,7 @@ def reference_text(kind, params):
     return '\\' + command + options + '{' + key + '}'
 
 
-def extract_body(source: str) -> BodySelection:
+def extract_body(source: str, include_ert=False) -> BodySelection:
     """Read LyX paragraphs and a small, explicit set of inline insets.
 
     Unknown block insets are omitted, rather than guessed to be body prose.
@@ -54,7 +54,7 @@ def extract_body(source: str) -> BodySelection:
         suppressed = any(frame[0] for frame in stack)
         if stripped.startswith(r"\begin_inset "):
             kind = stripped[len(r"\begin_inset "):]
-            keep = kind == 'Formula' or kind.startswith(("Formula ", "Quotes ", "space ", "Newline ", "CommandInset citation", "CommandInset ref", "Flex "))
+            keep = (include_ert and kind == 'ERT') or kind == 'Formula' or kind.startswith(("Formula ", "Quotes ", "space ", "Newline ", "CommandInset citation", "CommandInset ref", "Flex "))
             if not keep and not suppressed:
                 excluded += 1
             stack.append((suppressed or not keep, kind, {}))
@@ -89,6 +89,8 @@ def extract_body(source: str) -> BodySelection:
             if not stack:
                 output.append("\n\n")
                 deleted = False
+            elif include_ert and stack[-1][1] == 'ERT':
+                output.append('\n')
             continue
         if stripped.startswith(r"\change_deleted"):
             deleted = True

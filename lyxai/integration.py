@@ -202,7 +202,7 @@ def capture_lyx_payload():
             native = ctypes.string_at(pointer, size).rstrip(b"\x00").decode("utf-8-sig")
         finally:
             k.GlobalUnlock(handle)
-        selection = extract_body(native)
+        selection = extract_body(native, include_ert=True)
         if len(selection.text) > 2_000_000:
             raise ValueError("Selection too large / 选区过长，请分段问询")
         return {"text": selection.text, "excluded": selection.excluded, "native": native, "owner_pid": pid.value}

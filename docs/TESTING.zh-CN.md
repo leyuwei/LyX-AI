@@ -8,13 +8,26 @@ Windows 本机验证。默认快速回归不操作桌面；真实 LyX 和浏览�
 python -m unittest discover -s tests -q
 ```
 
-快速回归包含 **75 项，其中 71 项通过，4 项 macOS 专用检查在 Windows 跳过，约 1.2 秒**。使用 Qt offscreen、本机 HTTP mock 与临时配置，不调用真实 API、不移动鼠标、不截图、不切换窗口、不启动真实 LyX。
+快速回归包含 **94 项，其中 90 项通过，4 项 macOS 专用检查在 Windows 跳过，约 3 秒**。使用 Qt offscreen、本机 HTTP mock 与临时配置，不调用真实 API、不移动鼠标、不截图、不切换窗口、不启动真实 LyX。
 
 新增检查：当前选区/光标写回、剪贴板过期内容隔离与通信失败不降级为插入；中英文版权链接指向项目主页；全局应用按钮在每个输出标签下均可见；语言保存、关闭重开及切回；旧配置模板追加、不覆盖用户编辑且不重复添加；align/aligned 等环境与内嵌定界符、标签/编号保留、不完整环境拒绝。
 
 覆盖三种 API 协议、生成与思考参数、超时、取消、错误和流式解析、DPAPI、单实例通信、安装回滚、结构化正文过滤、上下文歧义、Markdown/公式分段、原生公式序列化、原生引用序列化、含非正文对象的完整覆盖、原生语法注入拒绝、完整修改稿提取、失败/截断不提取、语言切换保留待替换正文，以及预览安全边界。
 
-预览标签隐藏时不会创建浏览器。开始新请求会清空旧替换稿，防止误用上一轮结果。
+快速测试替换真实浏览器创建，浏览器与原生窗口另做一次显式检查。正式程序启动时准备并复用浏览器，尚未打开预览时不排版回答。开始新请求会清空旧替换稿，防止误用上一轮结果。
+
+## 设置、历史及小屏幕回归
+
+新增关闭重开与实际 500 ms 自动保存检查：回复语言、自定义提示词、模板选择、模型、上下文范围（含 1200）、自动开关、窗口大小、标签和配置窗口状态。模型参数取消时不提交，窗口状态仍保留。
+
+历史覆盖首次问询、追问、新问询、失败、取消、部分输出、异常中断标记、搜索和删除、重开恢复、模型选择不被自动恢复历史覆盖、接口认证信息不进入数据库；实际本机 HTTP mock 也验证成功追问和认证失败归档。
+
+```powershell
+python tests/smoke_ui.py
+python tests/smoke_ui.py --native
+```
+
+后者只在 Windows 的隐藏 desktop 运行，不切换用户桌面，不操作鼠标，不读取用户屏幕。约 3 秒验证真实浏览器：第一次打开预览、反复切换及语言切换后，窗口句柄不变、没有 Hide/Close、位置不变、页面不重载、滚动位置保留。中英文分别检查 640×480、800×600、1024×600，按钮可达，长状态只占一行，模型配置在 640×480 可以滚动使用。
 
 ## 真实 LyX 的独立检查
 
@@ -22,7 +35,7 @@ python -m unittest discover -s tests -q
 python tests/smoke_lyx.py
 ```
 
-本机约 **14 秒**，只用临时文档和独立 LyX 用户目录，通过官方 LyX Server 执行命令。没有鼠标、截图或屏幕坐标依赖。优先用独立 Windows window station；本机权限不允许时使用不可见 desktop，测试前复制剪贴板全部 Qt 格式，并在 finally 中恢复。此检查不应作为高频后台任务运行。
+本机约 **35 秒（含新增结构与 PDF 编译检查）**，只用临时文档和独立 LyX 用户目录，通过官方 LyX Server 执行命令。没有鼠标、截图或屏幕坐标依赖。优先用独立 Windows window station；本机权限不允许时使用不可见 desktop，测试前复制剪贴板全部 Qt 格式，并在 finally 中恢复。此检查不应作为高频后台任务运行。
 
 已实际验证：
 
@@ -33,6 +46,9 @@ python tests/smoke_lyx.py
 - 原生粘贴替换目标，行内公式和**单行 Displayed 公式**均成为真正 Formula inset。
 - 使用用户提供的完整 align 多行公式和 aligned 进行实际粘贴，验证 label、三处 nonumber 保留；LyX 的 HTML 剪贴板导出包含 MathML 表格及至少六行，确认实际对齐结构，而非文字源码。
 - 原文语言设置保留，周围 Note、Foot 完整保留。
+- Theorem/Lemma 原生布局、LaTeX 环境别名、标题、标签与字体；HTML 导出确认定理/引理标签，LaTeX 导出确认标题和引用键。
+- LaTeX 章节、加粗、强调和公式导入为原生结构；整块 ERT、源码内部替换和源码光标插入保留原始命令。
+- 本机有 TeX Live 时编译定理与 ERT 公式导出文件为 PDF；本次 Windows 验证已成功。
 - **一次 undo 恢复整个原始正文**。
 - 使用原问询会话替换新选区、在新光标处插入含公式内容；两者均可一次撤销。中途编辑同一文档仍可应用，撤销保留用户编辑；跨文档写入拒绝。磁盘原文件不被保存改写。
 
@@ -43,6 +59,7 @@ python tests/smoke_lyx.py
 ```powershell
 $env:QT_QPA_PLATFORM = 'offscreen'
 python main.py --self-test-preview .test-runtime/preview.json
+python main.py --self-test-ui .test-runtime/ui-package.json
 python tests/smoke_package.py
 ```
 
@@ -64,4 +81,4 @@ python tests/smoke_package.py
 
 请按[覆盖升级教程](UPGRADE.zh-CN.md#无-api-的短验收)在文档副本上验收一次。测试时间为本机测量，不代表 AI 响应耗时或 GUI 冷启动延迟。
 
-macOS 原生联调与打包验证见 [macOS 安装与构建](INSTALL.macOS.md)。`tests/smoke_macos.py` 使用独立用户目录和临时文档，验证引用在 XHTML 导出中解析为编号，以及含 Note/Footnote 选区的覆盖与完整撤销。
+本次新增功能只在 Windows 原生环境及离屏环境验收，未在 macOS 实机打包验证。macOS 原有联调说明见 [macOS 安装与构建](INSTALL.macOS.md)。`tests/smoke_macos.py` 使用独立用户目录和临时文档，验证引用在 XHTML 导出中解析为编号，以及含 Note/Footnote 选区的覆盖与完整撤销。

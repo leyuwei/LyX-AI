@@ -178,7 +178,18 @@ def load_context(payload, stem=None, radius=1800, include_context=True):
         # Export must not have switched buffers while acquiring context.
         if server.command('server-get-filename') != filename:
             raise ValueError('LyX 文档已切换，请重新问询。 / LyX document changed.')
-    context = automatic_context(payload['native'], snapshot, radius)
+    from .replacement import source_destination
+    if source_destination(payload['native']):
+        context = dict(before='', after='', context_excluded=0)
+    else:
+        try:
+            context = automatic_context(payload['native'], snapshot, radius)
+        except ValueError:
+            # Copying from inside ERT loses its parent type and may serialize a
+            # Standard paragraph. Raw source has no unambiguous prose context.
+            if r'\backslash' not in payload['native']:
+                raise
+            context = dict(before='', after='', context_excluded=0)
     if not include_context:
         context.update(before='', after='')
     return dict(filename=filename, **context)
@@ -186,7 +197,7 @@ def load_context(payload, stem=None, radius=1800, include_context=True):
 
 def apply_replacement(payload, replacement, stem=None):
     from .integration import capture_lyx_payload
-    from .replacement import replacement_fragment
+    from .replacement import replacement_fragment, source_destination, source_fragment, latex_input
     with LyXServer(stem or pipe_name(payload.get('lyx_user_dir'))) as server:
         if not payload.get('filename') or server.command('server-get-filename') != payload['filename']:
             raise ValueError('当前 LyX 文档已变化，请回原文或从新文档重新问询。 / LyX document changed; return to the original document or ask from the new one.')
@@ -206,14 +217,25 @@ def apply_replacement(payload, replacement, stem=None):
             if current.get('owner_pid') != payload.get('owner_pid'):
                 raise ValueError('LyX process changed; nothing replaced / LyX 进程已变化，未执行覆盖')
             template = current['native']
+            layout = server.command('server-get-layout')
             mode = 'replace'
-        fragment = replacement_fragment(template, replacement)
-        set_native_clipboard(fragment, replacement)
+        if r'\change_' in native_body(template):
+            raise ValueError('请先接受或拒绝修订，再应用改写。 / Accept or reject tracked changes before applying.')
+        source = 'interior' if layout == 'Plain Layout' else source_destination(template)
+        imported = None
+        if source:
+            fragment = source_fragment(template, replacement, source)
+        else:
+            # Latex structures must be parsed with the live document's modules
+            # and preamble; the normal serializer remains lossless for formulas.
+            imported = latex_input(replacement, server.snapshot()) if re.search(r'\\(?:begin\{|textbf|textit|texttt|emph|underline|section|subsection|paragraph|label|footnote)|```(?:latex|tex)', replacement) else None
+            fragment = None if imported is not None else replacement_fragment(template, replacement)
+        set_native_clipboard(fragment, imported if imported is not None else replacement)
         # Also provides a LyX event-loop turn to observe the new clipboard
         # before Paste reads Qt's cached MIME data.
         if server.command('server-get-filename') != payload['filename']:
             raise ValueError('LyX document changed; nothing replaced')
-        server.command('paste')
+        server.command('paste', 'latex') if imported is not None else server.command('paste')
     return {'applied': True, 'mode': mode}
 
 
@@ -241,7 +263,10 @@ def set_native_clipboard(native, text):
         raise ctypes.WinError(ctypes.get_last_error())
     blocks = []
     try:
-        for fmt, raw in ((u.RegisterClipboardFormatW('application/x-lyx'), native.encode()+b'\0'), (13, text.encode('utf-16le')+b'\0\0')):
+        formats = [(13, text.encode('utf-16le')+b'\0\0')]
+        if native is not None:
+            formats.insert(0, (u.RegisterClipboardFormatW('application/x-lyx'), native.encode()+b'\0'))
+        for fmt, raw in formats:
             handle = k.GlobalAlloc(0x42, len(raw))
             if not handle:
                 raise MemoryError('Clipboard allocation failed')

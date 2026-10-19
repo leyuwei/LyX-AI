@@ -20,6 +20,9 @@ Select a passage in the LyX document body and open the assistant from the contex
 | **Native equation writeback** | Inline, displayed and multiline align/aligned equations become editable LyX math objects, retaining supported numbering and label structures. |
 | **Markdown and math preview** | Read headings, lists, tables and equations in an offline preview before using the revision. |
 | **Your models and relay services** | Separate profiles for endpoints, protocols, keys, models, generation settings, reasoning, proxies and timeouts. |
+| **Persistent preferences** | Reply language, selected and edited prompts, model, context radius and window layout are saved automatically, including a 1200-character context option. |
+| **Local conversation history** | Search questions, answers and reasoning summaries; reload conversations and continue. Partial replies survive failed or cancelled requests. |
+| **Comfortable on small screens** | Screen-aware sizing, scrollable panels and a one-line status bar. Preview switches retain the window and page position. |
 | **Prompts for writing tasks** | Edit or save templates for academic editing, proofreading, concision, logical flow, equations and translation; continue with follow-up questions. |
 | **Reviewable, undoable changes** | Inspect the outgoing request, choose the current selection or caret as the destination, and undo the application in LyX with one action. |
 
@@ -38,14 +41,25 @@ Keep official endpoints and relay configurations in separate profiles. Configure
 Applicable revisions are placed in a separate, editable **Replacement** area. Review or edit the passage, preview it, then use **Apply at LyX position** in the global bottom toolbar, available from every tab.
 
 - Supports inline math, single-line displayed equations and multiline alignment, including standalone `align` and `aligned` environments.
+- Preserves Theorem/Lemma target layouts and uses the native LyX importer for LaTeX environments and text formatting. ERT areas retain real LaTeX source for document typesetting.
 - Keeps the target passage separate from preceding and following context, so the requested editing scope is clear.
 - Converts `\eqref{…}`, `\ref{…}` and `\cite{…}` into native LyX objects so the document resolves their numbers and citations.
 - Uses the latest destination: replaces the current selection or inserts at the current caret. You may move the selection or edit the same document while waiting; switching documents blocks writeback. Replacing a selection removes selected Note/Footnote and other non-body objects; one undo restores them.
 - Follows the LyX UI language for context-menu labels. The assistant has its own persistent Chinese/English language setting.
 
+## Revisit a conversation and continue
+
+![Searchable local conversation history](docs/images/history-en.png)
+
+*Illustrative history entries; no AI request was sent for this screenshot.*
+
+Use **History…** in the bottom toolbar to inspect questions, answers, models and completion status. Search older records or load more results. Standalone startup restores the last conversation; opening a new selection from LyX starts a fresh target. Upgrades retain preferences and history.
+
+Theorem environments require a matching Theorems module in the current document; see `examples/regions-demo.lyx`. Custom macros depend on the document configuration.
+
 ## A local companion with a visible sending scope
 
-Installs in your user directory without modifying LyX program files. Credentials are protected by **Windows DPAPI / macOS Keychain**. Selections and conversations are not automatically written to configuration files. Automatic context uses a temporary local document snapshot that is deleted after reading.
+Installs in your user directory without modifying LyX program files. Credentials are protected by **Windows DPAPI / macOS Keychain**. Sent passages, surrounding context, answers and reasoning summaries are saved locally in `history.sqlite3`. Search, load or delete them through History; they are not automatically uploaded. Automatic context uses a temporary local document snapshot that is deleted after reading.
 
 KaTeX and fonts are bundled for offline preview rendering. When you send a request, the passage and context in the input area go to your configured API. Inspect the complete request beforehand.
 

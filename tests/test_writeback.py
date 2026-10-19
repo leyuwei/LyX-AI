@@ -4,6 +4,8 @@ from unittest.mock import MagicMock, patch
 
 from lyxai.bridge import apply_replacement, load_context
 from lyxai.errors import LyXCommandError
+from lyxai.replacement import latex_input, source_destination, source_fragment
+from lyxai.selection import extract_body
 
 
 def native(text, layout='Standard'):
@@ -89,3 +91,69 @@ class LiveDestinationTests(unittest.TestCase):
         self.assertEqual(result['filename'], 'original.lyx')
         self.assertEqual(result['before'], 'Edited document with')
         self.assertFalse(any(call.args[0] == 'copy' for call in self.server.command.call_args_list))
+
+    def test_latex_text_uses_native_importer_and_current_document(self):
+        with patch('lyxai.bridge.LyXServer', return_value=self.server), patch('lyxai.integration.capture_lyx_payload', return_value=self.selection), patch('lyxai.bridge.set_native_clipboard') as clipboard:
+            apply_replacement(self.payload, r'\textbf{Bold} $x=1$', stem='test')
+        self.assertEqual(self.server.command.call_args.args, ('paste', 'latex'))
+        self.assertEqual(clipboard.call_args.args[1], r'\textbf{Bold} $x=1$')
+        self.assertIsNone(clipboard.call_args.args[0])  # Do not leave stale native text on the clipboard.
+
+    def test_ert_interior_with_standard_clipboard_layout_uses_live_layout(self):
+        self.layout = 'Plain Layout'
+        self.selection['native'] = native('\\backslash\ntextbf{Old code}')
+        with patch('lyxai.bridge.LyXServer', return_value=self.server), patch('lyxai.integration.capture_lyx_payload', return_value=self.selection), patch('lyxai.bridge.set_native_clipboard') as clipboard:
+            apply_replacement(self.payload, r'\emph{New $x$}', stem='test')
+        self.assertEqual(self.server.command.call_args.args, ('paste',))
+        self.assertIn('\\begin_layout Plain Layout\n', clipboard.call_args.args[0])
+        self.assertIn('\\backslash\nemph{New $x$}', clipboard.call_args.args[0])
+        self.assertNotIn('\\begin_inset Formula', clipboard.call_args.args[0])
+
+
+class RegionSerializationTests(unittest.TestCase):
+    def test_theorem_aliases_respect_loaded_module_and_preserve_math(self):
+        document = native('Existing').replace('\\end_header', '\\begin_modules\ntheorems-ams\n\\end_modules\n\\end_header')
+        result = latex_input(r'\begin{lemma}[Title]\label{lem:x}A $x$ and \begin{aligned}a&=b\\c&=d\end{aligned}.\end{lemma}', document)
+        self.assertIn(r'\begin{lem}[Title]', result)
+        self.assertIn(r'\label{lem:x}', result)
+        self.assertIn('\\[\n\\begin{aligned}', result)
+        self.assertIn(r'\end{lem}', result)
+        with self.assertRaisesRegex(ValueError, 'AMS Theorems'):
+            latex_input(r'\begin{theorem}A\end{theorem}', native('No module'))
+
+    def test_plain_theorem_passage_keeps_its_native_layout(self):
+        from lyxai.replacement import replacement_fragment
+        result = replacement_fragment(native('Old lemma', 'Lemma'), r'New lemma $x$.')
+        self.assertIn('\\begin_layout Lemma\n', result)
+        self.assertIn('\\begin_inset Formula $x$', result)
+
+    def test_ert_is_available_only_for_selected_import_not_body_context(self):
+        ert = '\\begin_inset ERT\nstatus open\n\\begin_layout Plain Layout\n\\backslash\ntextbf{Old source}\n\\end_layout\n\\end_inset'
+        selection = native(ert)
+        with self.assertRaisesRegex(ValueError, 'No body text'):
+            extract_body(selection)
+        self.assertEqual(extract_body(selection, include_ert=True).text, r'\textbf{Old source}')
+        self.assertEqual(source_destination(selection), 'object')
+        result = source_fragment(selection, '\\textbf{New}\n$x=1$', 'object')
+        self.assertIn('\\begin_inset ERT\n', result)
+        self.assertEqual(extract_body(result, include_ert=True).text, '\\textbf{New}\n$x=1$')
+        self.assertNotIn('\\begin_inset Formula', result)
+
+    def test_source_interior_preserves_backslashes_and_cannot_inject_native_insets(self):
+        original = native(r'\textbf{Old}', 'Plain Layout')
+        self.assertEqual(source_destination(original), 'interior')
+        result = source_fragment(original, r'\emph{New $x$}', 'interior')
+        self.assertIn('\\begin_layout Plain Layout\n', result)
+        self.assertNotIn('\\begin_inset Formula', result)
+        with self.assertRaises(ValueError):
+            source_fragment(original, '\\end_layout\n\\begin_inset ERT', 'interior')
+
+    def test_latex_fences_are_explicit_and_unsafe_commands_are_refused(self):
+        self.assertEqual(latex_input('```latex\n\\textbf{Bold}\n```', native('A')), r'\textbf{Bold}')
+        self.assertIsNone(latex_input('```python\n\\textbf{Bold}\n```', native('A')))
+        self.assertIsNone(latex_input(r'`\textbf{Code}`', native('A')))
+        for code in (r'\input{secret}', r'\write18{execute}', r'\csname input\endcsname{secret}'):
+            with self.assertRaises(ValueError):
+                latex_input('```tex\n'+code+'\n```', native('A'))
+        with self.assertRaisesRegex(ValueError, 'Incomplete'):
+            latex_input(r'\begin{lemma}Unclosed', native('A'))

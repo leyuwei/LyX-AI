@@ -24,6 +24,7 @@ def main():
     parser.add_argument("--selection-file", help="Explicit plain text file for testing or standalone use")
     parser.add_argument("--data-dir", help="Isolated settings directory")
     parser.add_argument('--self-test-preview', metavar='REPORT', help=argparse.SUPPRESS)
+    parser.add_argument('--self-test-ui', metavar='REPORT', help=argparse.SUPPRESS)
     arguments = sys.argv[1:]
     if len(arguments) == 2 and arguments[0] == '--encoded-args':
         arguments = json.loads(bytes.fromhex(arguments[1]).decode('utf-8'))
@@ -52,7 +53,13 @@ def main():
     from PySide6.QtCore import QTimer, Qt
     from lyxai.instance import deliver, InstanceServer
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
+    QApplication.setAttribute(Qt.ApplicationAttribute.AA_DontCreateNativeWidgetSiblings)
     app = QApplication(sys.argv[:1])
+    if args.self_test_ui:
+        if os.environ.get('QT_QPA_PLATFORM') != 'offscreen':
+            raise ValueError('UI self-check requires QT_QPA_PLATFORM=offscreen')
+        from lyxai.ui_check import check_window
+        return check_window(app, args.self_test_ui)
     if args.self_test_preview:
         if os.environ.get('QT_QPA_PLATFORM') != 'offscreen':
             raise ValueError('Preview self-check requires QT_QPA_PLATFORM=offscreen')

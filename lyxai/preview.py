@@ -1,4 +1,4 @@
-"""Offline Markdown/KaTeX preview, loaded only when the user opens this tab."""
+"""Offline Markdown/KaTeX preview with a stable, reusable browser widget."""
 from __future__ import annotations
 
 import html
@@ -47,6 +47,7 @@ class RichPreview(QWidget):
         super().__init__(parent)
         self.text = ''
         self.view = None
+        self.last_rendered = None
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.placeholder = QLabel('Markdown · LaTeX · Offline preview')
@@ -57,6 +58,8 @@ class RichPreview(QWidget):
         self.timer.timeout.connect(self.render)
 
     def set_text(self, text):
+        if text == self.text:
+            return
         self.text = text
         if self.isVisible():
             self.timer.start()
@@ -65,9 +68,7 @@ class RichPreview(QWidget):
         super().showEvent(event)
         self.timer.start()
 
-    def render(self):
-        if not self.isVisible():
-            return
+    def prepare(self):
         if self.view is None:
             from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineSettings, QWebEngineUrlRequestInterceptor
             from PySide6.QtWebEngineWidgets import QWebEngineView
@@ -100,6 +101,11 @@ class RichPreview(QWidget):
             self.layout.removeWidget(self.placeholder)
             self.placeholder.deleteLater()
             self.layout.addWidget(self.view)
+    def render(self):
+        if not self.isVisible() or self.last_rendered == self.text:
+            return
+        self.prepare()
+        self.last_rendered = self.text
         self.view.setHtml(preview_html(self.text), QUrl.fromLocalFile(str(ASSETS) + '/'))
 
 
