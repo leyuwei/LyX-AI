@@ -214,7 +214,7 @@ def worker(desktop):
                 server.command('command-sequence', 'buffer-begin; paragraph-down; paragraph-down; paragraph-select')
                 apply_replacement(region_payload, r'\begin{lemma}\textit{New lemma} $z=5$.\end{lemma}', stem)
                 changed = server.snapshot()
-                assert '\\begin_layout Lemma\n' in changed and r'\shape italic' in changed
+                assert '\\begin_layout Lemma\n' in changed and r'\shape italic' in changed, native_body(changed)
                 server.command('command-sequence', 'buffer-begin; buffer-end-select; copy')
                 rendered = clipboard_html()
                 assert 'lemma_label' in rendered and 'New lemma' in rendered

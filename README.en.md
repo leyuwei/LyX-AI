@@ -17,11 +17,12 @@ Select a passage in the LyX document body and open the assistant from the contex
 | Highlight | What it gives you |
 |---|---|
 | **Automatic body context** | Reads the live document, including unsaved edits. Collects a configurable amount of surrounding prose while excluding Note, Footnote and other block objects from main-body ranges. |
+| **Uncluttered passage controls** | A consistent white interface stays readable. Three buttons show character counts; open a dialog to inspect or edit the target and surrounding context. |
 | **Native equation writeback** | Inline, displayed and multiline align/aligned equations become editable LyX math objects, retaining supported numbering and label structures. |
 | **Markdown and math preview** | Read headings, lists, tables and equations in an offline preview before using the revision. |
 | **Your models and relay services** | Separate profiles for endpoints, protocols, keys, models, generation settings, reasoning, proxies and timeouts. |
 | **Persistent preferences** | Reply language, selected and edited prompts, model, context radius and window layout are saved automatically, including a 1200-character context option. |
-| **Local conversation history** | Search questions, answers and reasoning summaries; reload conversations and continue. Partial replies survive failed or cancelled requests. |
+| **Local conversation history** | Read AI replies separately for each turn, with questions and reasoning in their own tabs. Search, reload and continue; partial replies survive failed or cancelled requests. |
 | **Comfortable on small screens** | Screen-aware sizing, scrollable panels and a one-line status bar. Preview switches retain the window and page position. |
 | **Prompts for writing tasks** | Edit or save templates for academic editing, proofreading, concision, logical flow, equations and translation; continue with follow-up questions. |
 | **Reviewable, undoable changes** | Inspect the outgoing request, choose the current selection or caret as the destination, and undo the application in LyX with one action. |
@@ -38,6 +39,8 @@ Keep official endpoints and relay configurations in separate profiles. Configure
 
 ## Revise prose and equations together
 
+Click **Target passage / Before / After** to inspect or edit text in a popup. Save commits changes for the next request; Cancel leaves the text unchanged. Automatic context collection still runs without opening these dialogs.
+
 Applicable revisions are placed in a separate, editable **Replacement** area. Review or edit the passage, preview it, then use **Apply at LyX position** in the global bottom toolbar, available from every tab.
 
 - Supports inline math, single-line displayed equations and multiline alignment, including standalone `align` and `aligned` environments.
@@ -53,7 +56,7 @@ Applicable revisions are placed in a separate, editable **Replacement** area. Re
 
 *Illustrative history entries; no AI request was sent for this screenshot.*
 
-Use **History…** in the bottom toolbar to inspect questions, answers, models and completion status. Search older records or load more results. Standalone startup restores the last conversation; opening a new selection from LyX starts a fresh target. Upgrades retain preferences and history.
+Use **History…** in the bottom toolbar. The default **AI reply** tab shows only the selected turn's answer; choose a turn to review earlier replies or follow-ups. Questions, reasoning and the full conversation have separate tabs. Search older records or load more results. Standalone startup restores the last conversation; opening a new selection from LyX starts a fresh target. Upgrades retain preferences and history.
 
 Theorem environments require a matching Theorems module in the current document; see `examples/regions-demo.lyx`. Custom macros depend on the document configuration.
 

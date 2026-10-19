@@ -2,7 +2,7 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
-from lyxai.bridge import apply_replacement, load_context
+from lyxai.bridge import apply_replacement, load_context, notify_lyx_clipboard
 from lyxai.errors import LyXCommandError
 from lyxai.replacement import latex_input, source_destination, source_fragment
 from lyxai.selection import extract_body
@@ -44,6 +44,7 @@ class LiveDestinationTests(unittest.TestCase):
         result, capture, clipboard = self.apply()
         self.assertEqual(result['mode'], 'replace')
         self.assertIn('\\begin_layout Section\n', clipboard.call_args.args[0])
+        self.assertEqual(clipboard.call_args.kwargs, {'notify_pid': 123})
         self.assertIn('\\begin_inset Formula $x^2$', clipboard.call_args.args[0])
         self.server.snapshot.assert_not_called()  # No obsolete full-document hash guard.
         self.assertEqual(self.server.command.call_args.args, ('paste',))
@@ -63,6 +64,12 @@ class LiveDestinationTests(unittest.TestCase):
             with self.assertRaises(TimeoutError):
                 apply_replacement(self.payload, 'Revised', stem='test')
             clipboard.assert_not_called()
+        self.assertFalse(any(call.args[0] == 'paste' for call in self.server.command.call_args_list))
+
+    def test_clipboard_refresh_failure_never_pastes(self):
+        with patch('lyxai.bridge.LyXServer', return_value=self.server), patch('lyxai.integration.capture_lyx_payload', return_value=self.selection), patch('lyxai.bridge.set_native_clipboard', side_effect=RuntimeError('Clipboard refresh timed out')):
+            with self.assertRaisesRegex(RuntimeError, 'timed out'):
+                apply_replacement(self.payload, 'Revision', stem='test')
         self.assertFalse(any(call.args[0] == 'paste' for call in self.server.command.call_args_list))
 
     def test_document_switch_during_preparation_stops_paste(self):
@@ -108,6 +115,31 @@ class LiveDestinationTests(unittest.TestCase):
         self.assertIn('\\begin_layout Plain Layout\n', clipboard.call_args.args[0])
         self.assertIn('\\backslash\nemph{New $x$}', clipboard.call_args.args[0])
         self.assertNotIn('\\begin_inset Formula', clipboard.call_args.args[0])
+
+
+class ClipboardNotificationTests(unittest.TestCase):
+    def test_only_target_process_clipboard_listener_is_refreshed_and_failures_abort(self):
+        api = MagicMock()
+        api.EnumWindows.side_effect = lambda callback, _: callback(101, 0)
+        def owner(hwnd, pointer):
+            pointer._obj.value = 456 if hwnd == 201 else 123
+        def name(hwnd, buffer, size):
+            buffer.value = 'MainWindow' if hwnd == 101 else 'Qt6QWindowClipboardView'
+        api.GetWindowThreadProcessId.side_effect = owner
+        api.GetClassNameW.side_effect = name
+        with patch('lyxai.bridge.ctypes.WinDLL', return_value=api, create=True), patch('lyxai.bridge.ctypes.WINFUNCTYPE', return_value=lambda fn: fn, create=True):
+            api.FindWindowExW.side_effect = [201, 202, None]
+            api.SendMessageTimeoutW.return_value = 1
+            notify_lyx_clipboard(123)
+            self.assertEqual(api.SendMessageTimeoutW.call_count, 1)
+            self.assertEqual(api.SendMessageTimeoutW.call_args.args[:6], (202, 0x031D, 0, 0, 2, 1500))
+            api.FindWindowExW.side_effect = [None]
+            with self.assertRaisesRegex(RuntimeError, 'listener unavailable'):
+                notify_lyx_clipboard(123)
+            api.FindWindowExW.side_effect = [202, None]
+            api.SendMessageTimeoutW.return_value = 0
+            with self.assertRaisesRegex(RuntimeError, 'timed out'):
+                notify_lyx_clipboard(123)
 
 
 class RegionSerializationTests(unittest.TestCase):

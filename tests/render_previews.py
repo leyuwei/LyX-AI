@@ -10,7 +10,7 @@ from PySide6.QtCore import Qt, QEventLoop, QTimer
 from PySide6.QtGui import QFont, QFontDatabase
 from PySide6.QtWidgets import QApplication, QSplitter
 from lyxai.core import PRESETS, Store, new_profile
-from lyxai.ui import MainWindow, SettingsDialog, HistoryDialog, STYLE
+from lyxai.ui import MainWindow, SettingsDialog, HistoryDialog, PassageDialog, STYLE
 from lyxai.history import timestamp
 
 QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
@@ -74,7 +74,7 @@ if '--readme' in sys.argv:
             window.output_tabs.setCurrentWidget(window.rich_preview)
             window.rich_preview.set_text(answer)
             window.show()
-            window.panes.setSizes([410, 360])
+            window.panes.setSizes([360, 410])
             window.rich_preview.timer.stop()
             window.rich_preview.render()
             loop = QEventLoop()
@@ -97,6 +97,11 @@ if '--readme' in sys.argv:
             assert ready.get('fonts') and ready.get('math') == 3 and ready.get('tables') == 1, ready
             app.processEvents()
             window.grab().save(str(folder / f'main-{lang}.png'))
+            passage = PassageDialog('问询原文' if lang == 'zh' else 'Target passage', target, window)
+            passage.show()
+            app.processEvents()
+            passage.grab().save(str(folder / f'passage-{lang}.png'))
+            passage.reject()
             config = window.config.copy()
             config['profiles'] = [new_profile(k) for k in PRESETS]
             for profile in config['profiles']:
@@ -118,6 +123,7 @@ if '--readme' in sys.argv:
             window.close()
             import shiboken6
             shiboken6.delete(history)
+            shiboken6.delete(passage)
             shiboken6.delete(dialog)
             shiboken6.delete(window)
             app.processEvents()

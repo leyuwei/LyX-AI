@@ -8,11 +8,11 @@ import shiboken6
 
 from PySide6.QtCore import Qt, QEventLoop, QTimer
 from PySide6.QtGui import QFont, QFontDatabase
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QDialog, QPlainTextEdit
 
 from lyxai.core import Store, new_profile
 from lyxai.history import HistoryStore, transcript
-from lyxai.ui import MainWindow, HistoryDialog, SettingsDialog, STYLE, choose
+from lyxai.ui import MainWindow, HistoryDialog, PassageDialog, SettingsDialog, STYLE, choose
 
 APP = QApplication.instance() or QApplication([])
 
@@ -48,7 +48,6 @@ class PersistenceTests(unittest.TestCase):
         w.prompt.setPlainText('Edited template A {selection}')
         w.templates.setCurrentIndex(3)
         w.prompt.setPlainText('Edited template B {selection}')
-        w.input_tabs.setCurrentIndex(2)
         w.output_tabs.setCurrentIndex(2)
         w.resize(720, 480)
         w.save_preferences()  # Same callback as the debounce timer; no Save button.
@@ -65,7 +64,6 @@ class PersistenceTests(unittest.TestCase):
         self.assertEqual(reopened.reply_lang.currentText(), 'My custom reply language')
         self.assertEqual(reopened.context_radius.currentData(), 1200)
         self.assertEqual(reopened.profile.currentData(), p['id'])
-        self.assertEqual(reopened.input_tabs.currentIndex(), 2)
         self.assertEqual(reopened.output_tabs.currentIndex(), 2)
         self.assertEqual(reopened.size().toTuple(), (720, 480))
 
@@ -150,6 +148,10 @@ class PersistenceTests(unittest.TestCase):
         turn = w.archive.get(w.session['id'])['turns'][0]
         self.assertEqual(turn['status'], 'cancelled')
         self.assertEqual(turn['answer'], 'Partial output')
+        dlg = HistoryDialog(w.archive, 'en', w)
+        self.assertEqual(dlg.reply.toPlainText(), 'Partial output')
+        self.assertIn('Cancelled', dlg.reply_status.full_text)
+        dlg.close()
         self.assertIn('Another question', w.conversation.toPlainText())
         self.assertIn('Partial reasoning', w.conversation.toPlainText())
         self.assertEqual(w.history, [])
@@ -186,16 +188,91 @@ class PersistenceTests(unittest.TestCase):
         dlg = HistoryDialog(w.archive, 'zh', w)
         self.assertEqual(dlg.list.count(), 1)
         self.assertIn('Question with 中文', dlg.detail.toPlainText())
+        self.assertEqual(dlg.reply.toPlainText(), '[REVISED]Revised $x$[/REVISED]')
+        self.assertNotIn('Question with', dlg.reply.toPlainText())
+        self.assertEqual(dlg.question.toPlainText(), 'Question with 中文 100%_literal')
+        self.assertEqual(dlg.tabs.currentIndex(), 0)
         dlg.search.setText('absent')
         dlg.refresh()
         self.assertEqual(dlg.list.count(), 0)
         self.assertFalse(dlg.load_btn.isEnabled())
+        self.assertEqual(dlg.reply.toPlainText(), '')
+        self.assertFalse(dlg.turns.isEnabled())
         dlg.search.clear()
         dlg.refresh()
         dlg.delete_selected()
         self.assertFalse(w.archive.list())
         w.session = None
         dlg.close()
+
+    def test_history_separates_each_turn_partial_answers_and_empty_failed_reply(self):
+        w = self.window()
+        self.answer(w, 'First AI answer\nUSER\nliteral words in the answer')
+        self.answer(w, 'Second AI answer', followup=True)
+        with patch('lyxai.ui.NetworkJob'):
+            w.run_request(w.history + [{'role': 'user', 'content': 'Question without a reply'}], followup=True)
+            w.failed('Failure\nDetails')
+        dlg = HistoryDialog(w.archive, 'en', w)
+        self.assertEqual(dlg.turns.count(), 3)
+        self.assertEqual(dlg.turns.currentIndex(), 2)
+        self.assertEqual(dlg.reply.toPlainText(), '')
+        self.assertEqual(dlg.question.toPlainText(), 'Question without a reply')
+        self.assertIn('Failed', dlg.reply_status.text())
+        self.assertNotIn('\n', dlg.reply_status.text())
+        dlg.turns.setCurrentIndex(0)
+        self.assertEqual(dlg.reply.toPlainText(), 'First AI answer\nUSER\nliteral words in the answer')
+        self.assertEqual(dlg.thinking.toPlainText(), 'Returned summary')
+        dlg.turns.setCurrentIndex(1)
+        self.assertEqual(dlg.reply.toPlainText(), 'Second AI answer')
+        dlg.close()
+
+    def test_passage_buttons_edit_save_cancel_and_use_updated_request_text(self):
+        w = self.window('<b>Keep literal</b> $x$')
+        self.assertEqual(w.selection.toPlainText(), '<b>Keep literal</b> $x$')
+        self.assertEqual(len(w.passage_buttons), 3)
+        self.assertNotIn(w.selection, w.findChildren(QPlainTextEdit))
+        self.assertFalse(hasattr(w, 'input_tabs'))
+        for index, document in enumerate((w.selection, w.before, w.after)):
+            dlg = PassageDialog('Passage', document.toPlainText(), w)
+            dlg.editor.setPlainText(f'Edited {index} $x_i$')
+            dlg.resize(720, 480)
+            with patch('lyxai.ui.PassageDialog', return_value=dlg), patch.object(dlg, 'exec', side_effect=lambda: (dlg.accept(), dlg.result())[1]):
+                w.passage_buttons[index].click()
+            self.assertEqual(document.toPlainText(), f'Edited {index} $x_i$')
+            self.assertIn(str(len(document.toPlainText())), w.passage_buttons[index].text())
+        content = w.initial_messages()[-1]['content']
+        for index in range(3):
+            self.assertIn(f'Edited {index} $x_i$', content)
+        dlg = PassageDialog('Passage', w.selection.toPlainText(), w)
+        dlg.editor.setPlainText('Cancelled edit')
+        with patch('lyxai.ui.PassageDialog', return_value=dlg), patch.object(dlg, 'exec', side_effect=lambda: (dlg.reject(), dlg.result())[1]):
+            w.edit_passage(0)
+        self.assertEqual(w.selection.toPlainText(), 'Edited 0 $x_i$')
+        choose(w.language, 'en')
+        self.assertEqual(w.before.toPlainText(), 'Edited 1 $x_i$')
+        self.assertIn('Target passage', w.passage_buttons[0].text())
+        w.save_preferences()
+        reopened = self.window()
+        restored = PassageDialog('Passage', '', reopened)
+        self.assertEqual(restored.size().toTuple(), (720, 480))
+        restored.reject()
+
+    def test_passage_dialog_does_not_overwrite_new_lyx_target_even_if_same_text(self):
+        w = self.window('Target')
+        dlg = PassageDialog('Passage', 'Target', w)
+        dlg.editor.setPlainText('Stale edit')
+        def incoming():
+            w.accept_message({'kind': 'selection', 'text': 'Target'})
+            dlg.accept()
+            return dlg.result()
+        with patch('lyxai.ui.PassageDialog', return_value=dlg), patch.object(dlg, 'exec', side_effect=incoming):
+            w.edit_passage(0)
+        self.assertEqual(w.selection.toPlainText(), 'Target')
+        self.assertIn('LyX', w.status.full_text)
+        w.busy(True)
+        self.assertTrue(all(not action.isEnabled() for action in w.passage_buttons))
+        w.busy(False)
+        self.assertTrue(all(action.isEnabled() for action in w.passage_buttons))
 
     def test_single_line_status_keeps_full_multiline_message_in_tooltip(self):
         w = self.window()

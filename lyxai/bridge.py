@@ -230,16 +230,57 @@ def apply_replacement(payload, replacement, stem=None):
             # and preamble; the normal serializer remains lossless for formulas.
             imported = latex_input(replacement, server.snapshot()) if re.search(r'\\(?:begin\{|textbf|textit|texttt|emph|underline|section|subsection|paragraph|label|footnote)|```(?:latex|tex)', replacement) else None
             fragment = None if imported is not None else replacement_fragment(template, replacement)
-        set_native_clipboard(fragment, imported if imported is not None else replacement)
-        # Also provides a LyX event-loop turn to observe the new clipboard
-        # before Paste reads Qt's cached MIME data.
+        set_native_clipboard(fragment, imported if imported is not None else replacement, notify_pid=payload['owner_pid'])
         if server.command('server-get-filename') != payload['filename']:
             raise ValueError('LyX document changed; nothing replaced')
         server.command('paste', 'latex') if imported is not None else server.command('paste')
     return {'applied': True, 'mode': mode}
 
 
-def set_native_clipboard(native, text):
+def notify_lyx_clipboard(pid):
+    """Refresh only LyX's Qt clipboard cache, after all formats are published.
+
+    EmptyClipboard can notify LyX while the clipboard is still locked; LyX's
+    deferred refresh then races an immediate server paste. A synchronous
+    WM_CLIPBOARDUPDATE to its clipboard listener completes before we paste.
+    """
+    u = ctypes.WinDLL('user32', use_last_error=True)
+    callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    u.EnumWindows.argtypes = [callback_type, wintypes.LPARAM]
+    u.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    u.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    u.FindWindowExW.argtypes = [wintypes.HWND, wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR]
+    u.FindWindowExW.restype = wintypes.HWND
+    u.SendMessageTimeoutW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM,
+                                     wintypes.UINT, wintypes.UINT, ctypes.POINTER(ctypes.c_size_t)]
+    u.SendMessageTimeoutW.restype = wintypes.LPARAM
+    listeners = []
+    def inspect(hwnd, _):
+        owner = wintypes.DWORD()
+        u.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+        if owner.value == pid:
+            name = ctypes.create_unicode_buffer(256)
+            u.GetClassNameW(hwnd, name, len(name))
+            if 'ClipboardView' in name.value:
+                listeners.append(hwnd)
+        return True
+    u.EnumWindows(callback_type(inspect), 0)
+    # Newer Qt uses a message-only listener, omitted by EnumWindows.
+    previous = None
+    while True:
+        previous = u.FindWindowExW(wintypes.HWND(-3), previous, None, None)
+        if not previous:
+            break
+        inspect(previous, 0)
+    if not listeners:
+        raise RuntimeError('无法同步 LyX 剪贴板，未执行粘贴。 / LyX clipboard listener unavailable; nothing pasted.')
+    for hwnd in listeners:
+        result = ctypes.c_size_t()
+        if not u.SendMessageTimeoutW(hwnd, 0x031D, 0, 0, 2, 1500, ctypes.byref(result)):
+            raise RuntimeError('LyX 剪贴板同步超时，未执行粘贴。 / LyX clipboard refresh timed out; nothing pasted.')
+
+
+def set_native_clipboard(native, text, notify_pid=None):
     if sys.platform == 'darwin':
         from .macos import set_clipboard
         return set_clipboard(native, text)
@@ -291,6 +332,8 @@ def set_native_clipboard(native, text):
                 block[1] = None  # ownership transferred to Windows
         finally:
             u.CloseClipboard()
+        if notify_pid is not None:
+            notify_lyx_clipboard(notify_pid)
     finally:
         for _, handle in blocks:
             if handle:

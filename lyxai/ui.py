@@ -6,7 +6,7 @@ import json
 import os
 
 from PySide6.QtCore import Qt, QTimer, QThread, Signal, QUrl, QRect
-from PySide6.QtGui import QFont, QTextCursor, QIcon, QDesktopServices, QSurface
+from PySide6.QtGui import QFont, QTextCursor, QTextDocument, QIcon, QDesktopServices, QSurface
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
     QFormLayout, QHBoxLayout, QGridLayout, QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem,
@@ -25,8 +25,8 @@ from . import __version__
 
 
 STYLE = """
-QWidget { font-family: 'Segoe UI', 'Microsoft YaHei UI'; font-size: 10pt; color: #22364a; }
-QMainWindow, QDialog { background: #f2f6fa; }
+QWidget { font-family: 'Segoe UI', 'Microsoft YaHei UI'; font-size: 10pt; color: #22364a; background: #ffffff; }
+QMainWindow, QDialog, QScrollArea { background: #ffffff; }
 QPlainTextEdit, QLineEdit, QComboBox, QListWidget, QDoubleSpinBox {
  background: white; color: #22364a; border: 1px solid #cddce5; border-radius: 8px; padding: 8px;
  selection-background-color: #c6ece9; selection-color: #16354b;
@@ -41,7 +41,7 @@ QPushButton { padding: 9px 15px; border-radius: 8px; border: 1px solid #c8d9e3; 
 QPushButton:hover { background: #e4f2f2; border-color: #76b9bf; }
 QPushButton:pressed { background: #cde7e8; }
 QPushButton:focus { border: 2px solid #168f98; padding: 8px 14px; }
-QPushButton:disabled { color: #8c9ca9; background: #e8eef3; border-color: #dbe4eb; }
+QPushButton:disabled { color: #758595; background: #ffffff; border-color: #e0e7ec; }
 QPushButton[primary="true"] { background: #176f83; color: white; border-color: #176f83; }
 QPushButton[primary="true"]:hover { background: #125b70; }
 QPushButton[primary="true"]:disabled { background: #a7bcc6; border-color: #a7bcc6; }
@@ -51,8 +51,9 @@ QTabBar::tab:selected { color: #14697b; background: #fff; border-bottom: 3px sol
 QTabBar::tab:hover { color: #14697b; background: #e7f1f5; }
 QLabel[muted="true"] { color: #62788a; }
 QLabel#brand { font-size: 24px; font-weight: 700; color: #174e68; }
-QSplitter::handle { background: #e0e9f0; height: 5px; }
-QScrollBar:vertical { width: 10px; background: #f2f6fa; }
+QSplitter::handle { background: #ffffff; height: 5px; }
+QSplitter::handle:hover { background: #c6ece9; }
+QScrollBar:vertical { width: 10px; background: #ffffff; }
 QScrollBar::handle:vertical { background: #c2d3de; border-radius: 5px; min-height: 24px; }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
 """
@@ -142,6 +143,41 @@ def window_state(widget):
     return dict(geometry=[rect.x(), rect.y(), rect.width(), rect.height()], maximized=widget.isMaximized())
 
 
+class PassageDialog(QDialog):
+    """Edit a copy; only Save commits it to the request's text document."""
+    def __init__(self, title, text, parent):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setWindowIcon(parent.windowIcon())
+        self.setMinimumSize(480, 360)
+        layout = QVBoxLayout(self)
+        layout.addWidget(note(parent.t('查看或修改内容，点击保存后用于下一次问询。取消不会改变内容。',
+                                      'Review or edit this text. Save uses it in the next request; Cancel keeps the original.')))
+        self.editor = QPlainTextEdit(text)
+        self.editor.setAccessibleName(title)
+        layout.addWidget(self.editor, 1)
+        self.count = note('')
+        self.editor.textChanged.connect(self.update_count)
+        self.update_count()
+        layout.addWidget(self.count)
+        buttons = QDialogButtonBox()
+        buttons.addButton(parent.t('保存', 'Save'), QDialogButtonBox.ButtonRole.AcceptRole)
+        buttons.addButton(parent.t('取消', 'Cancel'), QDialogButtonBox.ButtonRole.RejectRole)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        fit_window(self, parent.config.get('ui_state', {}).get('passage', {}), (800, 600))
+
+    def update_count(self):
+        size = len(self.editor.toPlainText())
+        self.count.setText(self.parent().t(f'{size} 字符', f'{size} characters'))
+
+    def done(self, result):
+        self.parent().config.setdefault('ui_state', {})['passage'] = window_state(self)
+        self.parent().schedule_preferences()
+        super().done(result)
+
+
 class HistoryDialog(QDialog):
     def __init__(self, archive, lang, parent=None):
         super().__init__(parent)
@@ -160,9 +196,29 @@ class HistoryDialog(QDialog):
         layout.addWidget(split, 1)
         self.list = QListWidget()
         split.addWidget(self.list)
-        self.detail = QPlainTextEdit()
-        self.detail.setReadOnly(True)
-        split.addWidget(self.detail)
+        page = QWidget()
+        content = QVBoxLayout(page)
+        content.setContentsMargins(0, 0, 0, 0)
+        self.turns = QComboBox()
+        self.turns.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.turns.setAccessibleName(t('问答轮次', 'Conversation turn'))
+        self.turns.currentIndexChanged.connect(self.select_turn)
+        content.addWidget(self.turns)
+        self.reply_status = StatusLine()
+        content.addWidget(self.reply_status)
+        self.tabs = QTabWidget()
+        self.tabs.setUsesScrollButtons(True)
+        self.tabs.setMinimumWidth(0)
+        for name, title in (('reply', t('AI 回复', 'AI reply')), ('question', t('用户问询', 'User question')),
+                            ('thinking', t('思考 / 摘要', 'Reasoning / summary')), ('detail', t('完整对话', 'Full conversation'))):
+            editor = QPlainTextEdit()
+            editor.setReadOnly(True)
+            editor.setAccessibleName(title)
+            setattr(self, name, editor)
+            self.tabs.addTab(editor, title)
+        self.reply.setPlaceholderText(t('该轮尚未收到 AI 回复。', 'No AI reply was received for this turn.'))
+        content.addWidget(self.tabs, 1)
+        split.addWidget(page)
         split.setSizes(self.ui_state.get('splitter', [160, 360]))
         layout.addWidget(note(t('历史仅保存在本机，不含接口密钥。载入后可继续追问；写回使用当前已连接的 LyX 文档。', 'Stored locally without API credentials. Load to continue; writeback uses the currently connected LyX document.')))
         row = QHBoxLayout()
@@ -213,8 +269,33 @@ class HistoryDialog(QDialog):
     def select(self, item, previous=None):
         self.session = self.archive.get(item.data(Qt.ItemDataRole.UserRole)) if item else None
         self.detail.setPlainText(transcript(self.session) if self.session else '')
+        self.turns.blockSignals(True)
+        self.turns.clear()
+        for index, turn in enumerate(self.session.get('turns', []) if self.session else []):
+            model = turn.get('profile', {}).get('model', '')
+            self.turns.addItem(f'{index + 1} · {turn.get("time", "")[:19].replace("T", " ")} · {model}', index)
+        self.turns.setCurrentIndex(self.turns.count() - 1)
+        self.turns.blockSignals(False)
+        self.select_turn()
+        self.tabs.setCurrentIndex(0)
         self.load_btn.setEnabled(bool(self.session))
         self.delete_btn.setEnabled(bool(self.session))
+
+    def select_turn(self):
+        index = self.turns.currentIndex()
+        turn = self.session['turns'][index] if self.session and index >= 0 else {}
+        self.reply.setPlainText(turn.get('answer', ''))
+        self.question.setPlainText(turn.get('question', ''))
+        self.thinking.setPlainText(turn.get('reasoning', ''))
+        states = {'complete': ('已完成', 'Complete'), 'incomplete': ('回答不完整', 'Incomplete reply'),
+                  'cancelled': ('已取消，显示已收到的回复', 'Cancelled; showing received reply'),
+                  'error': ('请求失败，显示已收到的回复', 'Failed; showing received reply'),
+                  'interrupted': ('已中断，显示已收到的回复', 'Interrupted; showing received reply'),
+                  'pending': ('请求进行中', 'Request in progress')}
+        state = turn.get('status', '')
+        labels = states.get(state, (state, state))
+        self.reply_status.setText((labels[0] if self.lang == 'zh' else labels[1]) + (' · ' + turn['error'] if turn.get('error') else ''))
+        self.turns.setEnabled(bool(self.turns.count()))
 
     def delete_selected(self):
         if self.session:
@@ -635,9 +716,13 @@ class MainWindow(QMainWindow):
         self.windowHandle().setSurfaceType(surface)
         self.config = self.store.load()
         self.lang = self.config.get("language", "zh")
-        self.selection_text = selection
-        self.before_text = ""
-        self.after_text = ""
+        # Text lives in documents; editors are created only while a popup is open.
+        self.selection = QTextDocument(self)
+        self.selection.setPlainText(selection)
+        self.before = QTextDocument(self)
+        self.after = QTextDocument(self)
+        for document in (self.selection, self.before, self.after):
+            document.contentsChanged.connect(self.update_passage_buttons)
         self.history = []
         self.job = None
         self.pending = None
@@ -728,22 +813,14 @@ class MainWindow(QMainWindow):
         context_row.addWidget(self.context_btn)
         context_row.addStretch()
         sl.addLayout(context_row)
-        self.input_tabs = QTabWidget()
-        self.input_tabs.setUsesScrollButtons(True)
-        self.input_tabs.setMinimumHeight(105)
-        self.input_tabs.setMaximumHeight(150)
-        self.selection = QPlainTextEdit(self.selection_text)
-        self.selection.setAccessibleName(self.t("选中文字", "Selected text"))
-        self.selection.setPlaceholderText(self.t("在 LyX 中选中文字后右键“问询 AI”，或在这里粘贴。", "Select text in LyX and choose Ask AI, or paste text here."))
-        self.before = QPlainTextEdit(self.before_text)
-        self.after = QPlainTextEdit(self.after_text)
-        for editor, zh, en in ((self.before, "前文", "Context before"), (self.after, "后文", "Context after")):
-            editor.setAccessibleName(self.t(zh, en))
-            editor.setPlaceholderText(self.t("回到 LyX 框选正文，再右键加入此处。可重复框选，也可编辑；手动粘贴的文字请自行排除备注脚注。", "Select body text in LyX and use its context menu to add it here. Repeat to append more. Manually pasted text must be checked for notes/footnotes."))
-        self.input_tabs.addTab(self.selection, self.t("问询原文", "Target passage"))
-        self.input_tabs.addTab(self.before, self.t("前文（可选）", "Before (optional)"))
-        self.input_tabs.addTab(self.after, self.t("后文（可选）", "After (optional)"))
-        sl.addWidget(self.input_tabs)
+        passage_row = QHBoxLayout()
+        self.passage_buttons = []
+        for index in range(3):
+            action = button('', lambda checked=False, i=index: self.edit_passage(i))
+            passage_row.addWidget(action, 1)
+            self.passage_buttons.append(action)
+        self.update_passage_buttons()
+        sl.addLayout(passage_row)
         template_row = QGridLayout()
         template_row.addWidget(QLabel(self.t("提示词模板", "Prompt template")), 0, 0)
         self.templates = QComboBox()
@@ -827,8 +904,7 @@ class MainWindow(QMainWindow):
         self.output_scroll.setWidget(output)
         panes.addWidget(self.output_scroll)
         ui = self.config.get('ui_state', {}).get('main', {})
-        panes.setSizes(ui.get('splitter', [360, 340]))
-        self.input_tabs.setCurrentIndex(min(ui.get('input_tab', 0), self.input_tabs.count()-1))
+        panes.setSizes(ui.get('splitter', [360, 400]))
         self.output_tabs.setCurrentIndex(min(ui.get('output_tab', 0), self.output_tabs.count()-1))
         actions = self.action_grid = QGridLayout()
         self.send_btn = button(self.t("发送问询", "Send request"), self.send, True)
@@ -854,10 +930,36 @@ class MainWindow(QMainWindow):
         outer.addLayout(footer)
         self.follow_btn.setEnabled(bool(self.history))
         self._building = False
-        for signal in (self.reply_lang.currentTextChanged, self.prompt.textChanged, self.input_tabs.currentChanged, self.output_tabs.currentChanged, self.panes.splitterMoved):
+        for signal in (self.reply_lang.currentTextChanged, self.prompt.textChanged, self.output_tabs.currentChanged, self.panes.splitterMoved):
             signal.connect(self.schedule_preferences)
         self.replacement.textChanged.connect(self.schedule_preferences)
         self.adapt_layout()
+
+    def update_passage_buttons(self):
+        if not hasattr(self, 'passage_buttons'):
+            return
+        names = (self.t('问询原文', 'Target passage'), self.t('前文', 'Before'), self.t('后文', 'After'))
+        for action, document, name in zip(self.passage_buttons, (self.selection, self.before, self.after), names):
+            size = len(document.toPlainText())
+            action.setText(f'{name} · {size}')
+            action.setAccessibleName(name)
+            action.setToolTip(self.t(f'查看 / 编辑{name}（{size} 字符）', f'View / edit {name.lower()} ({size} characters)'))
+
+    def edit_passage(self, index):
+        if self.job or self.bridge_job:
+            return
+        document = (self.selection, self.before, self.after)[index]
+        original = document.toPlainText()
+        # The revision catches IPC updates, even when the new target has identical text.
+        revision = document.revision()
+        dlg = PassageDialog(self.passage_buttons[index].accessibleName(), original, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            if document.revision() != revision:
+                self.status.setText(self.t('内容已由 LyX 更新，未覆盖新内容。请重新打开编辑。', 'LyX updated this text. The newer text was kept; reopen to edit.'))
+            else:
+                document.setPlainText(dlg.editor.toPlainText())
+                self.status.setText(self.t('内容已保存，下次发送问询时使用。', 'Text saved for the next request.'))
+        dlg.deleteLater()
 
     def adapt_layout(self):
         compact = self.width() < 1050
@@ -901,7 +1003,7 @@ class MainWindow(QMainWindow):
                            auto_context=self.auto_context.isChecked(), context_radius=self.context_radius.currentData(), active=self.profile.currentData())
         if self.loaded_template >= 0:
             self.config['templates'][self.loaded_template]['prompt'] = self.prompt.toPlainText()
-        self.config.setdefault('ui_state', {})['main'] = dict(window_state(self), splitter=self.panes.sizes(), input_tab=self.input_tabs.currentIndex(), output_tab=self.output_tabs.currentIndex())
+        self.config.setdefault('ui_state', {})['main'] = dict(window_state(self), splitter=self.panes.sizes(), output_tab=self.output_tabs.currentIndex())
 
     def save_preferences(self):
         self.preferences_timer.stop()
@@ -969,9 +1071,6 @@ class MainWindow(QMainWindow):
         self.config['auto_context'] = self.auto_context.isChecked()
         self.config['context_radius'] = self.context_radius.currentData()
         self.config["language"] = self.language.currentData()
-        self.selection_text = self.selection.toPlainText()
-        self.before_text = self.before.toPlainText()
-        self.after_text = self.after.toPlainText()
         template_index = self.templates.currentIndex()
         self.config["templates"][template_index]["prompt"] = self.prompt.toPlainText()
         self.config["template_index"] = template_index
@@ -1091,7 +1190,7 @@ class MainWindow(QMainWindow):
         self.job.start(messages)
 
     def busy(self, busy):
-        for widget in (self.send_btn, self.settings_btn, self.profile, self.language, self.selection, self.before, self.after, self.prompt, self.templates, self.reply_lang, self.history_btn):
+        for widget in (self.send_btn, self.settings_btn, self.profile, self.language, *self.passage_buttons, self.prompt, self.templates, self.reply_lang, self.history_btn):
             widget.setEnabled(not busy)
         self.cancel_btn.setEnabled(busy)
         self.follow_btn.setEnabled(not busy and bool(self.history))
@@ -1233,7 +1332,6 @@ class MainWindow(QMainWindow):
             self.conversation.clear()
             self.replacement.clear()
             self.rich_preview.set_text('')
-            self.input_tabs.setCurrentIndex(0)
             self.status.setText(self.t("问询原文已更新，前后文已清空。", "Target updated; previous context cleared."))
             if self.lyx_payload:
                 self.refresh_context()
@@ -1242,7 +1340,6 @@ class MainWindow(QMainWindow):
             existing = editor.toPlainText().strip()
             text = message["text"].strip()
             editor.setPlainText(existing + "\n\n" + text if existing else text)
-            self.input_tabs.setCurrentIndex(1 if kind == "before" else 2)
             self.history = []
             self.follow_btn.setEnabled(False)
             self.conversation.clear()

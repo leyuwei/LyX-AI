@@ -5,10 +5,11 @@ from pathlib import Path
 import tempfile
 
 from PySide6.QtCore import QEvent, QEventLoop, QObject, QTimer
-from PySide6.QtGui import QFont, QFontDatabase
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
 
 from .core import Store
-from .ui import MainWindow, SettingsDialog, STYLE, choose
+from .ui import MainWindow, SettingsDialog, HistoryDialog, PassageDialog, STYLE, choose
+from .history import timestamp
 
 
 def check_window(app, report_path):
@@ -108,9 +109,52 @@ def check_window(app, report_path):
         app.processEvents()
         assert dialog.size().toTuple() == (640, 480)
         dialog.close()
-        report.update(small_windows=sizes, one_line_status=True, settings_fit=True, passed=True)
+
+        # Simulate a dark system palette without changing the user's OS theme.
+        original_palette = app.palette()
+        dark = QPalette(original_palette)
+        for role in (QPalette.ColorRole.Window, QPalette.ColorRole.Base, QPalette.ColorRole.Button, QPalette.ColorRole.AlternateBase):
+            dark.setColor(role, QColor('#101010'))
+        for role in (QPalette.ColorRole.Text, QPalette.ColorRole.WindowText, QPalette.ColorRole.ButtonText):
+            dark.setColor(role, QColor('#eeeeee'))
+        app.setPalette(dark)
+        w.output_tabs.setCurrentIndex(0)
+        w.answer.setPlainText('Readable AI reply under a dark system palette')
+        passage = PassageDialog('Target passage', w.selection.toPlainText(), w)
+        passage.show()
+        demonstration = w.archive.new(target='A question')
+        demonstration['turns'] = [dict(time=timestamp(), status='complete', question='Question kept separately', answer='AI answer only', reasoning='Summary')]
+        w.archive.save(demonstration)
+        history = HistoryDialog(w.archive, 'en', w)
+        history.resize(640, 480)
+        history.show()
+        app.processEvents()
+        backgrounds = {}
+        for name, widget in dict(main=w.centralWidget(), source=w.source_scroll.widget(), source_viewport=w.source_scroll.viewport(),
+                                 output=w.output_scroll.widget(), answer=w.answer.viewport(),
+                                 passage=passage, passage_editor=passage.editor.viewport(), history=history, history_reply=history.reply.viewport()).items():
+            pixel = widget.grab().toImage().pixelColor(3, 3)
+            backgrounds[name] = pixel.name()
+            assert min(pixel.red(), pixel.green(), pixel.blue()) >= 245, (name, pixel.name())
+        for editor in (w.answer, passage.editor, history.reply):
+            foreground = editor.palette().color(QPalette.ColorRole.Text)
+            assert max(foreground.red(), foreground.green(), foreground.blue()) < 130, foreground.name()
+        assert history.reply.toPlainText() == 'AI answer only'
+        assert history.question.toPlainText() == 'Question kept separately'
+        assert history.size().toTuple() == (640, 480), history.size().toTuple()
+        assert w.selection.toPlainText() == 'Keep this target'
+        assert len(w.passage_buttons) == 3
+        for name, widget in (('dark-main', w), ('dark-passage', passage), ('dark-history', history)):
+            widget.grab().save(str(report_path.with_name(report_path.stem + '-' + name + '.png')))
+        history.reject()
+        passage.reject()
+        app.setPalette(original_palette)
+        report.update(small_windows=sizes, one_line_status=True, settings_fit=True, passage_dialog=True,
+                      separate_history_reply=True, dark_palette_backgrounds=backgrounds, passed=True)
         w.close()
         import shiboken6
+        shiboken6.delete(history)
+        shiboken6.delete(passage)
         shiboken6.delete(dialog)
         shiboken6.delete(w)
         app.processEvents()
