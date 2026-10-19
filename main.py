@@ -56,8 +56,8 @@ def main():
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_DontCreateNativeWidgetSiblings)
     app = QApplication(sys.argv[:1])
     if args.self_test_ui:
-        if os.environ.get('QT_QPA_PLATFORM') != 'offscreen':
-            raise ValueError('UI self-check requires QT_QPA_PLATFORM=offscreen')
+        if app.platformName() not in ('offscreen', 'cocoa'):
+            raise ValueError('UI self-check requires offscreen or macOS Cocoa')
         from lyxai.ui_check import check_window
         return check_window(app, args.self_test_ui)
     if args.self_test_preview:

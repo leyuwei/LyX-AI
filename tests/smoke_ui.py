@@ -1,4 +1,4 @@
-"""Run once explicitly: actual browser and optionally a hidden native Windows desktop."""
+"""Explicit browser check: native Cocoa, hidden Windows desktop, or offscreen."""
 import os
 from pathlib import Path
 import subprocess
@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 
-if '--native' in sys.argv:
+if '--native' in sys.argv and sys.platform == 'win32':
     import ctypes
     from ctypes import wintypes
     u = ctypes.WinDLL('user32', use_last_error=True)
@@ -30,7 +30,10 @@ if '--native' in sys.argv:
     finally:
         u.CloseDesktop(desktop)
 else:
-    if '--worker' not in sys.argv:
+    native = '--worker' in sys.argv or '--native' in sys.argv
+    if native and sys.platform == 'darwin':
+        os.environ['QT_QPA_PLATFORM'] = 'cocoa'
+    elif not native:
         os.environ['QT_QPA_PLATFORM'] = 'offscreen'
     from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QApplication
@@ -38,6 +41,6 @@ else:
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_DontCreateNativeWidgetSiblings)
     app = QApplication([])
     from lyxai.ui_check import check_window
-    report = ROOT / '.test-runtime' / ('ui-native.json' if '--worker' in sys.argv else 'ui-offscreen.json')
+    report = ROOT / '.test-runtime' / ('ui-native.json' if native else 'ui-offscreen.json')
     check_window(app, report)
     print(report.read_text(encoding='utf-8'))

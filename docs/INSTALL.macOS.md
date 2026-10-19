@@ -59,6 +59,7 @@ QT_QPA_PLATFORM=offscreen .venv/bin/python -m unittest discover -s tests -p 'tes
 .venv/bin/python tests/smoke_package.py dist/LyXAI.app/Contents/MacOS/LyXAI
 LYXAI_SMOKE_EXE="$PWD/dist/LyXAI.app/Contents/MacOS/LyXAI" .venv/bin/python tests/smoke_macos.py
 QT_QPA_PLATFORM=offscreen dist/LyXAI.app/Contents/MacOS/LyXAI --self-test-preview "$PWD/build/macos/preview.json"
+QT_QPA_PLATFORM=cocoa dist/LyXAI.app/Contents/MacOS/LyXAI --self-test-ui "$PWD/build/macos/ui-native.json"
 codesign --verify --deep --strict dist/LyXAI.app
 ```
 

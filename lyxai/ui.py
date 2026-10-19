@@ -705,15 +705,20 @@ class MainWindow(QMainWindow):
         self.store = store or Store()
         # WebEngine's first composited child otherwise upgrades a visible
         # raster window, recreating its native handle on Windows (Qt 6.4+).
-        self.winId()
         platform = QApplication.platformName()
-        backend = os.environ.get('QSG_RHI_BACKEND', 'd3d11' if platform == 'windows' else 'metal' if platform == 'cocoa' else 'opengl')
-        surfaces = {'d3d11': QSurface.SurfaceType.Direct3DSurface,
-                    'd3d12': QSurface.SurfaceType.Direct3DSurface,
-                    'metal': QSurface.SurfaceType.MetalSurface,
-                    'vulkan': QSurface.SurfaceType.VulkanSurface}
-        surface = surfaces.get(backend, QSurface.SurfaceType.OpenGLSurface)
-        self.windowHandle().setSurfaceType(surface)
+        if platform == 'cocoa':
+            # Qt must create the Metal backing layer with the native window;
+            # changing its surface type after winId() leaves an incompatible layer.
+            os.environ.setdefault('QT_WIDGETS_RHI', '1')
+        elif platform == 'windows':
+            self.winId()
+            backend = os.environ.get('QSG_RHI_BACKEND', 'd3d11')
+            surfaces = {'d3d11': QSurface.SurfaceType.Direct3DSurface,
+                        'd3d12': QSurface.SurfaceType.Direct3DSurface,
+                        'metal': QSurface.SurfaceType.MetalSurface,
+                        'vulkan': QSurface.SurfaceType.VulkanSurface}
+            surface = surfaces.get(backend, QSurface.SurfaceType.OpenGLSurface)
+            self.windowHandle().setSurfaceType(surface)
         self.config = self.store.load()
         self.lang = self.config.get("language", "zh")
         # Text lives in documents; editors are created only while a popup is open.
