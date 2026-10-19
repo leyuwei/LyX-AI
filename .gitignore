@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.test-runtime/
+build/
+dist/
+*.spec
+*-preview.png
