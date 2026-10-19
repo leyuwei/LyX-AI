@@ -51,7 +51,7 @@
 
 ## 开始使用
 
-**macOS 12 及以上：**完整解压 macOS 安装包，退出 LyX 与助手，运行 `Install-macOS.command`。程序安装至 `~/Applications/LyXAI.app`；正常打开 LyX 后即可通过右键菜单使用，中英文菜单同时显示。撤销快捷键为 **⌘Z**。详见 [macOS 安装与构建](docs/INSTALL.macOS.md)。
+**macOS 12 及以上：** 完整解压 macOS 安装包，退出 LyX 与助手，运行 `Install-macOS.command`。程序安装至 `~/Applications/LyXAI.app`；正常打开 LyX 后即可通过右键菜单使用，中英文菜单同时显示。撤销快捷键为 **⌘Z**。详见 [macOS 安装与构建](docs/INSTALL.macOS.md)。
 
 **Windows：**
 

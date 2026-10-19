@@ -15,7 +15,7 @@ try {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'dist\LyXAI') -Destination $packagePath -Recurse -Force
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'docs') -Destination $packagePath -Recurse -Force
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'examples') -Destination $packagePath -Recurse -Force
-    foreach ($name in @('Install.ps1','Install.cmd','Uninstall.ps1','README.md','README.en.md')) {
+    foreach ($name in @('Install.ps1','Install.cmd','Uninstall.ps1','README.md','README.en.md','LICENSE')) {
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination $packagePath -Force
     }
     Compress-Archive -Path (Join-Path $packagePath '*') -DestinationPath (Join-Path $PSScriptRoot 'dist\LyXAI-Windows.zip') -Force
