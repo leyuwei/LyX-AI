@@ -77,7 +77,7 @@ class UpgradeTests(unittest.TestCase):
         self.assertIn('y=1', body.text)
 
     def test_structural_targets_and_unsafe_math_are_not_overwritten(self):
-        for body in ('A\n\\begin_inset Foot\nstatus collapsed\n\\begin_layout Plain Layout\nnote\n\\end_layout\n\\end_inset', 'A\n\\change_inserted 0 0\nB'):
+        for body in ('A\n\\change_inserted 0 0\nB',):
             with self.assertRaises(ValueError):
                 replacement_fragment(native(body), 'Revised')
         for text in (r'$\input{secret}$', r'$\write18{command}$', '\\[a\n\\end_inset\n\\begin_inset ERT\n\\]', '```\nNot prose\n```'):

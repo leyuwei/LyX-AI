@@ -29,7 +29,7 @@ class SelectionTests(unittest.TestCase):
     def test_keeps_unicode_paragraphs_math_citations_and_inline_style(self):
         body = paragraph('中文 α。\n\\begin_inset Flex Emph\nstatus collapsed\n\\begin_layout Plain Layout\n强调正文\n\\end_layout\n\\end_inset\n\\begin_inset Formula $x_{i}=\\alpha$\n\\end_inset\n\\begin_inset CommandInset citation\nLatexCommand cite\nkey "paper2026"\n\\end_inset')
         result = extract_body(fragment(body + "\n" + paragraph("Second paragraph.")))
-        self.assertEqual(result.text, '中文 α。强调正文$x_{i}=\\alpha$[paper2026]\n\nSecond paragraph.')
+        self.assertEqual(result.text, '中文 α。强调正文$x_{i}=\\alpha$\\cite{paper2026}\n\nSecond paragraph.')
 
     def test_excludes_margins_figures_tables_unknown_blocks(self):
         for kind in ("Marginal", "Float figure", "Tabular", "Branch review", "UnknownObject"):
@@ -129,6 +129,8 @@ class ContextWindowTests(unittest.TestCase):
             self.assertEqual(process.exitCode(), 0, error)
             self.assertEqual(received, [{"kind": "before", "text": "中文 context"}])
             server.server.close()
+            if server.lock:
+                server.lock.unlock()
         if old is None:
             os.environ.pop("LYXAI_DATA_DIR", None)
         else:

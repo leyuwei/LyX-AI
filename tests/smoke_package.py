@@ -51,15 +51,17 @@ def check(executable):
         assert len(received) == 1 and received[0]["text"] == text.read_text(encoding="utf-8")
         print(f"Packaged runtime IPC: OK ({time.perf_counter() - start:.3f}s; not GUI cold-start latency)")
         server.server.close()
+        if server.lock:
+            server.lock.unlock()
         user = root / "LyX2.5"
         subprocess.run([str(executable), "--install", "--lyx-user-dir", str(user), '--menu-language', 'en'], check=True, timeout=10)
         menu = (user / "ui/stdcontext.inc").read_text(encoding="utf-8")
-        assert menu.count("--context-before".encode().hex()) == 1
-        assert menu.count("--context-after".encode().hex()) == 1
+        for flag in ('--context-before', '--context-after'):
+            assert menu.count(flag.encode().hex()) == 1
         subprocess.run([str(executable), "--uninstall", "--lyx-user-dir", str(user)], check=True, timeout=10)
         assert not (user / "ui/stdcontext.inc").exists()
         print("Packaged isolated menu install / uninstall: OK")
 
 
 if __name__ == "__main__":
-    check(sys.argv[1] if len(sys.argv) > 1 else "dist/LyXAI/LyXAI.exe")
+    check(sys.argv[1] if len(sys.argv) > 1 else ('dist/LyXAI.app/Contents/MacOS/LyXAI' if sys.platform == 'darwin' else "dist/LyXAI/LyXAI.exe"))

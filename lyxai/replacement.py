@@ -5,11 +5,49 @@ from dataclasses import dataclass
 import re
 
 from markdown_it import MarkdownIt
+from .selection import reference_text
 
 
 ENVIRONMENTS = r'equation\*?|displaymath|align\*?|aligned|alignat\*?|alignedat|flalign\*?|gather\*?|gathered|multline\*?|eqnarray\*?|split'
 HULL = re.compile(r'\\begin\{(equation\*?|align\*?|alignat\*?|flalign\*?|gather\*?|multline\*?|eqnarray\*?)\}([\s\S]*)\\end\{\1\}')
 MATH = re.compile(r'(?<!\\)(\$\$(.+?)\$\$|\\\[(.+?)\\\]|\\\((.+?)\\\)|\$(?!\$)([^\n$]+?)(?<!\\)\$|\\begin\{(' + ENVIRONMENTS + r')\}(.+?)\\end\{\6\})', re.S)
+REF_COMMANDS = r'eqref|ref|pageref|vref|vpageref|nameref|prettyref|formatted|labelonly'
+CITE_COMMANDS = r'cite|citep|citet|citealt|citealp|citeauthor|citeyear|citeyearpar|parencite|textcite|autocite|footcite|smartcite|supercite|Citep|Citet|Citeauthor|Parencite|Textcite|Autocite'
+REFERENCE = re.compile(r'(?<!\\)\\(' + REF_COMMANDS + '|' + CITE_COMMANDS + r')(\*)?\s*(?:\[([^\[\]\r\n]*)\]\s*)?(?:\[([^\[\]\r\n]*)\]\s*)?\{([^{}\r\n]*)\}')
+
+
+def body_insets(body):
+    """Return complete outer insets, excluding their nested paragraph layouts."""
+    depth = 0
+    start = 0
+    for match in re.finditer(r'(?m)^\\(begin_inset [^\n]+|end_inset)[ \t]*$', body):
+        if match[1].startswith('begin_inset '):
+            if depth == 0:
+                start = match.start()
+            depth += 1
+        else:
+            depth -= 1
+            if depth < 0:
+                raise ValueError('Unbalanced LyX inset')
+            if depth == 0:
+                yield start, match.end(), body[start:match.end()]
+    if depth:
+        raise ValueError('Incomplete LyX inset')
+
+
+def reference_inset(match):
+    command, star, first, second, key = match.groups()
+    citation = re.fullmatch(CITE_COMMANDS, command) is not None
+    if not key.strip() or any(c in key for c in '\\"\0'):
+        raise ValueError('Invalid citation or reference key / 引用标签无效')
+    if not citation and (first is not None or second is not None):
+        raise ValueError('Unsupported reference options / 引用选项不支持')
+    if any(c in (first or '') + (second or '') for c in '\\{}"\0'):
+        raise ValueError('Citation notes must be plain text / 文献引用附注须为纯文本')
+    if citation:
+        options = ('before "' + first + '"\nafter "' + second + '"\n') if second is not None else ('after "' + first + '"\n' if first is not None else '')
+        return '\\begin_inset CommandInset citation\nLatexCommand ' + command + (star or '') + '\n' + options + 'key "' + key + '"\nliteral "true"\n\\end_inset'
+    return '\\begin_inset CommandInset ref\nLatexCommand ' + command + '\nreference "' + key + '"\nnolink "' + ('true' if star else 'false') + '"\n\\end_inset'
 
 
 @dataclass
@@ -64,9 +102,19 @@ def replacement_fragment(original, replacement):
     if not replacement.strip() or len(replacement) > 200_000 or '\0' in replacement:
         raise ValueError('替换正文为空或过长。 / Replacement is empty or too long.')
     body = original.split(r'\begin_body', 1)[1].split(r'\end_body', 1)[0]
-    kinds = re.findall(r'\\begin_inset ([^\n]+)', body)
-    if any(kind != 'Formula' and not kind.startswith('Formula ') for kind in kinds) or r'\change_' in body:
-        raise ValueError('目标含备注、脚注、引用或其他结构对象，不能无损重建；请缩小到正文及完整公式。 / Target contains structural objects; select prose and complete formulas only.')
+    insets = list(body_insets(body))
+    existing_refs = {}
+    for start, end, raw in reversed(insets):
+        kind = raw.split('\n', 1)[0][len('\\begin_inset '):]
+        if kind in ('CommandInset citation', 'CommandInset ref'):
+            params = dict(re.findall(r'(?m)^(key|reference|before|after|nolink) "(.*)"$', raw))
+            command = re.search(r'(?m)^LatexCommand (.+)$', raw)
+            if command:
+                params['command'] = command[1]
+            existing_refs[reference_text(kind, params)] = raw
+        body = body[:start] + body[end:]
+    if r'\change_' in body:
+        raise ValueError('请先接受或拒绝修订，再应用改写。 / Accept or reject tracked changes before applying.')
     if re.search(r'\\begin_layout (?:Plain Layout|Code|LyX-Code|Verbatim)', body):
         raise ValueError('请在主正文中选取完整文本和公式，不能替换嵌套对象内部。 / Select main body prose, not an inset interior.')
     layouts = re.findall(r'\\begin_layout ([^\n]+)', body)
@@ -81,22 +129,29 @@ def replacement_fragment(original, replacement):
             initial_style.append(line)
         elif not line.startswith('\\') or line.startswith('\\begin_inset'):
             break
-    math = []
+    objects = []
     protected = []
+    if 'LYXAIMATHPLACEHOLDER' in replacement:
+        raise ValueError('Reserved placeholder in replacement')
+
+    def stash(raw):
+        objects.append(raw)
+        return f'LYXAIMATHPLACEHOLDER{len(objects)-1}END'
+
+    def protect_reference(match):
+        return stash(existing_refs.get(match[0]) or reference_inset(match))
+
     for part in math_parts(replacement):
         if isinstance(part, Math):
             if re.search(r'\\(?:input|include|includegraphics|write|openout|read|catcode|csname|usepackage|documentclass|special|href|url)(?![A-Za-z])|\\(?:begin|end)_[A-Za-z]+|\\(?:begin|end)\{document\}', part.tex, re.I):
                 raise ValueError('公式包含不支持的文件、链接或执行命令。 / Unsupported command in formula.')
             if not part.tex:
                 raise ValueError('Empty formula')
-            math.append(part)
-            protected.append(f'LYXAIMATHPLACEHOLDER{len(math)-1}END')
+            protected.append(stash('\\begin_inset Formula ' + formula_source(part) + '\n\\end_inset'))
         else:
-            if 'LYXAIMATHPLACEHOLDER' in part:
-                raise ValueError('Reserved placeholder in replacement')
             if not part.startswith(('`', '~~~')) and re.search(r'\\(?:begin|end)\{(?:' + ENVIRONMENTS + r')\}|\\[\[\]]', part):
                 raise ValueError('公式定界符或环境不完整，请补全后再应用。 / Incomplete math environment or delimiter.')
-            protected.append(part)
+            protected.append(REFERENCE.sub(protect_reference, part) if not part.startswith(('`', '~~~')) else part)
     tokens = MarkdownIt('commonmark', {'html': False}).parse(''.join(protected))
     paragraphs = []
     for token in tokens:
@@ -125,9 +180,7 @@ def replacement_fragment(original, replacement):
         chunks = []
         for item in re.split(r'(LYXAIMATHPLACEHOLDER\d+END)', paragraph):
             if re.fullmatch(r'LYXAIMATHPLACEHOLDER\d+END', item):
-                value = math[int(item[len('LYXAIMATHPLACEHOLDER'):-3])]
-                formula = formula_source(value)
-                chunks.append('\n\\begin_inset Formula ' + formula + '\n\\end_inset\n\n')
+                chunks.append('\n' + objects[int(item[len('LYXAIMATHPLACEHOLDER'):-3])] + '\n\n')
             else:
                 chunks.append(plain(item))
         result.append('\\begin_layout ' + layouts[0] + '\n' + '\n'.join(initial_style) + '\n' + ''.join(chunks) + '\n\\end_layout\n')

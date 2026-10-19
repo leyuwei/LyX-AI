@@ -1,0 +1,85 @@
+#LyX 2.5 created this file. For more info see https://www.lyx.org/
+\lyxformat 643
+\begin_document
+\begin_header
+\textclass article
+\language english
+\inputencoding utf8
+\end_header
+\begin_body
+\begin_layout Section
+Introduction
+\begin_inset CommandInset label
+LatexCommand label
+name "sec:demo"
+\end_inset
+\end_layout
+\begin_layout Standard
+\begin_inset Formula \begin{equation}
+a=b\label{eq:demo}
+\end{equation}
+\end_inset
+\end_layout
+\begin_layout Standard
+\begin_inset Float figure
+placement doc
+wide false
+sideways false
+status open
+\begin_layout Plain Layout
+\begin_inset Caption Standard
+\begin_layout Plain Layout
+Demo figure
+\begin_inset CommandInset label
+LatexCommand label
+name "fig:demo"
+\end_inset
+\end_layout
+\end_inset
+\end_layout
+\end_inset
+\end_layout
+\begin_layout Standard
+\begin_inset Float table
+placement doc
+wide false
+sideways false
+status open
+\begin_layout Plain Layout
+\begin_inset Caption Standard
+\begin_layout Plain Layout
+Demo table
+\begin_inset CommandInset label
+LatexCommand label
+name "tab:demo"
+\end_inset
+\end_layout
+\end_inset
+\end_layout
+\end_inset
+\end_layout
+\begin_layout Standard
+Target references: See the equation, figure, table, section and bibliography.
+\begin_inset Note Note
+status collapsed
+\begin_layout Plain Layout
+SECRET NOTE
+\end_layout
+\end_inset
+\begin_inset Foot
+status collapsed
+\begin_layout Plain Layout
+SECRET FOOT
+\end_layout
+\end_inset
+\end_layout
+\begin_layout Bibliography
+\begin_inset CommandInset bibitem
+LatexCommand bibitem
+label "1"
+key "paper2026"
+\end_inset
+Example author. Example paper. 2026.
+\end_layout
+\end_body
+\end_document

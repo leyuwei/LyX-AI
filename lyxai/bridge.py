@@ -7,6 +7,7 @@ from ctypes import wintypes
 import os
 from pathlib import Path
 import re
+import sys
 import tempfile
 import time
 import uuid
@@ -20,18 +21,19 @@ class OVERLAPPED(ctypes.Structure):
 
 
 def pipe_name(user_dir=None):
-    user = Path(user_dir or Path(os.environ['APPDATA']) / 'LyX2.5')
+    from .integration import default_user_dir
+    user = Path(user_dir or default_user_dir())
     preferences = user / 'preferences'
     content = preferences.read_text(encoding='utf-8') if preferences.exists() else ''
     match = re.search(r'(?m)^\\serverpipe\s+"(.*)"', content)
-    stem = match[1] if match else r'\\.\pipe\$$UserDir\lyxpipe'
+    stem = match[1] if match else (str(user / '.lyxpipe') if sys.platform == 'darwin' else r'\\.\pipe\$$UserDir\lyxpipe')
     stem = stem.replace('$$UserDir', str(user).replace('\\', '/'))
     if not stem:
         raise ValueError('LyX Server 已禁用，请在 LyX 首选项中启用。 / LyX Server is disabled.')
-    return stem.replace('/', '\\')
+    return str(Path(stem).expanduser()) if sys.platform == 'darwin' else stem.replace('/', '\\')
 
 
-class LyXServer:
+class WindowsLyXServer:
     def __init__(self, stem=None, timeout=3):
         self.stem = stem or pipe_name()
         self.timeout = timeout
@@ -133,9 +135,23 @@ class LyXServer:
         with tempfile.TemporaryDirectory(prefix='lyxai-') as folder:
             path = Path(folder) / 'snapshot.lyx'
             self.command('buffer-export', 'lyx ' + str(path).replace('\\', '/'))
+            if sys.platform == 'darwin':
+                # macOS LyX acknowledges an export before its worker finishes.
+                deadline = time.monotonic() + self.timeout
+                while not path.exists() and time.monotonic() < deadline:
+                    time.sleep(.02)
             if not path.exists() or path.stat().st_size > 16_000_000:
                 raise RuntimeError('Unable to export current LyX buffer')
             return path.read_text(encoding='utf-8-sig')
+
+
+if sys.platform == 'darwin':
+    from .macos import MacLyXServer
+
+    class LyXServer(MacLyXServer):
+        snapshot = WindowsLyXServer.snapshot
+else:
+    LyXServer = WindowsLyXServer
 
 
 def automatic_context(native, snapshot, radius=1800):
@@ -199,6 +215,9 @@ def apply_replacement(payload, replacement, stem=None):
 
 
 def set_native_clipboard(native, text):
+    if sys.platform == 'darwin':
+        from .macos import set_clipboard
+        return set_clipboard(native, text)
     u = ctypes.WinDLL('user32', use_last_error=True)
     k = ctypes.WinDLL('kernel32', use_last_error=True)
     k.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]

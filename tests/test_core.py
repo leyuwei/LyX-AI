@@ -200,6 +200,7 @@ class InstallationTests(unittest.TestCase):
             store.save(upgraded)
             self.assertEqual(len(Store(Path(tmp)).load()['templates']), 11)
 
+    @patch('lyxai.integration.sys.platform', 'win32')
     def test_all_three_bootstraps_decode_to_exact_arguments(self):
         source = 'Menu "context-edit"\nEnd\n'
         args = [r"C:\Program Files\Python312\pythonw.exe", r"C:\Users\中文 Name\main.py"]
@@ -212,6 +213,7 @@ class InstallationTests(unittest.TestCase):
                 self.assertEqual(launch.call_args.args[0], args + ["--from-lyx"] + flags)
                 self.assertTrue(launch.call_args.kwargs["close_fds"])
 
+    @patch('lyxai.integration.sys.platform', 'win32')
     def test_menu_is_idempotent_and_quoted(self):
         source = 'Menuset\n\tMenu "context-edit"\n\t\tItem "Copy" "copy"\n\tEnd\nEnd\n'
         args = [r"C:\Program Files\Python312\pythonw.exe", r"C:\Users\中文 Name\main.py"]

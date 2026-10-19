@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -16,6 +17,14 @@ from .selection import extract_body
 
 BEGIN = "# BEGIN LYXAI MANAGED MENU"
 END = "# END LYXAI MANAGED MENU"
+
+
+def default_lyx_dir():
+    return Path('/Applications/LyX.app/Contents') if sys.platform == 'darwin' else Path(r'C:\Program Files\LyX 2.5')
+
+
+def default_user_dir():
+    return Path.home() / 'Library/Application Support/LyX-2.5' if sys.platform == 'darwin' else Path(os.environ['APPDATA']) / 'LyX2.5'
 
 
 def command_line():
@@ -27,7 +36,7 @@ def command_line():
 
 def menu_text(source, command, language="both"):
     # vc-command reads its entire command as ONE quote-delimited argument and
-    # waits for exit. A tiny bundled-Python bootstrap launches the GUI detached.
+    # waits for exit. Start a detached process so LyX stays responsive.
     # A hex integer avoids both LyX's and Systemcall's quote stripping, and
     # preserves spaces/Unicode. LyX 2.5 bundles Python 3.12 (big-endian default).
     labels = {
@@ -41,6 +50,18 @@ def menu_text(source, command, language="both"):
         code = "import subprocess;subprocess.Popen(" + repr(command + ["--from-lyx"] + extra) + ",stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,close_fds=True,creationflags=0x08000000)"
         payload = code.encode("utf-8")
         bootstrap = "pythonw -c exec((0x" + payload.hex() + ").to_bytes(" + str(len(payload)) + "))"
+        if sys.platform == 'darwin':
+            executable = Path(command[0])
+            if executable.parent.name == 'MacOS' and executable.parent.parent.name == 'Contents':
+                # LyX strips shell quotes and rewrites commands ending in .app.
+                # URL-escape the suffix too, so its macOS launcher leaves us alone.
+                arguments = json.dumps(command[1:] + ['--from-lyx'] + extra).encode().hex()
+                app_url = executable.parents[2].as_uri().replace('.app', '%2Eapp')
+                bootstrap = shlex.join(['/usr/bin/open', '-n', app_url, '--args', '--encoded-args', arguments])
+            else:
+                code = 'import subprocess;subprocess.Popen(' + repr(command + ['--from-lyx'] + extra) + ',stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,close_fds=True,start_new_session=True)'
+                payload = code.encode('utf-8')
+                bootstrap = shlex.quote(str(executable.resolve())) + ' -c exec((0x' + payload.hex() + ').to_bytes(' + str(len(payload)) + '))'
         lfun = 'command-sequence copy; vc-command U . "' + bootstrap + '"'
         escaped = lfun.replace("\\", "\\\\").replace('"', '\\"')
         items.append(f'\t\tItem "{label}" "{escaped}"')
@@ -52,9 +73,14 @@ def menu_text(source, command, language="both"):
     return source[:marker.end()] + "\n" + block + source[marker.end():]
 
 
-def install(lyx_dir=Path(r"C:\Program Files\LyX 2.5"), user_dir=None, *, command=None, language="both"):
-    lyx_dir = Path(lyx_dir)
-    user_dir = Path(user_dir or Path(os.environ["APPDATA"]) / "LyX2.5")
+def install(lyx_dir=None, user_dir=None, *, command=None, language="both"):
+    lyx_dir = Path(lyx_dir or default_lyx_dir())
+    if lyx_dir.suffix == '.app':
+        lyx_dir /= 'Contents'
+    user_dir = Path(user_dir or default_user_dir())
+    if sys.platform == 'darwin' and language == 'auto':
+        # macOS cannot use the Windows registry locale overlay.
+        language = 'both'
     if not (lyx_dir / "Resources/ui/stdcontext.inc").exists():
         raise ValueError("LyX installation directory not found / LyX 安装目录无效")
     preferences = user_dir / "preferences"
@@ -89,7 +115,7 @@ def install(lyx_dir=Path(r"C:\Program Files\LyX 2.5"), user_dir=None, *, command
 
 
 def uninstall(user_dir=None):
-    user_dir = Path(user_dir or Path(os.environ["APPDATA"]) / "LyX2.5")
+    user_dir = Path(user_dir or default_user_dir())
     manifest_path = user_dir / "lyxai-install.json"
     if not manifest_path.exists():
         return "No LyX AI menu installed / 没有已安装的菜单"
@@ -118,6 +144,9 @@ def uninstall(user_dir=None):
 
 def capture_lyx_payload():
     """Capture native structured selection before Qt; refuse unsafe plain-text fallback."""
+    if sys.platform == 'darwin':
+        from .macos import capture_payload
+        return capture_payload()
     if os.name != "nt":
         raise RuntimeError("Windows is required")
     u = ctypes.WinDLL("user32", use_last_error=True)

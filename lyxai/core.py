@@ -11,6 +11,7 @@ import math
 import os
 from pathlib import Path
 import re
+import sys
 import tempfile
 from urllib.parse import urlsplit, urlunsplit
 import uuid
@@ -66,6 +67,8 @@ def add_builtin_templates(config):
 
 
 def data_dir() -> Path:
+    if sys.platform == 'darwin':
+        return Path(os.environ.get('LYXAI_DATA_DIR') or Path.home() / 'Library/Application Support/LyXAI')
     return Path(os.environ.get("LYXAI_DATA_DIR") or Path(os.environ.get("APPDATA", Path.home())) / "LyXAI")
 
 
@@ -155,6 +158,11 @@ class Store:
         if obj.get("version") != 1 or not isinstance(obj.get("profiles"), list):
             raise ValueError("Unsupported configuration / 配置格式不支持；原文件已保留")
         for p in obj["profiles"]:
+            account = p.pop('credentials_keychain', None)
+            if account:
+                from .macos import keychain
+                p.update(json.loads(keychain(account)))
+                continue
             secret = p.pop("credentials_dpapi", None)
             p.update(json.loads(_dpapi(base64.b64decode(secret), True)) if secret else {"api_key": "", "headers": {}})
         self.revision = hashlib.sha256(raw).hexdigest()
@@ -171,22 +179,46 @@ class Store:
             if os.name == "nt":
                 import msvcrt
                 msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            new_accounts = []
             try:
                 current = hashlib.sha256(self.path.read_bytes()).hexdigest() if self.path.exists() else None
                 if current != self.revision:
                     raise ValueError("Configuration changed in another window. Reopen this window. / 配置已在其他窗口改变，请重新打开窗口。")
                 saved = copy.deepcopy(obj)
+                old = json.loads(self.path.read_bytes()) if self.path.exists() else {}
                 for p in saved["profiles"]:
                     secret = {k: p.pop(k, "") for k in ("api_key", "url", "proxy")}
                     secret["headers"] = p.pop("headers", {})
-                    p["credentials_dpapi"] = base64.b64encode(_dpapi(json.dumps(secret).encode())).decode()
+                    if sys.platform == 'darwin':
+                        from .macos import keychain
+                        account = uuid.uuid4().hex
+                        keychain(account, json.dumps(secret).encode())
+                        new_accounts.append(account)
+                        p['credentials_keychain'] = account
+                    else:
+                        p["credentials_dpapi"] = base64.b64encode(_dpapi(json.dumps(secret).encode())).decode()
                 raw = json.dumps(saved, ensure_ascii=False, indent=2, allow_nan=False).encode("utf-8")
                 atomic_write(self.path, raw)
                 self.revision = hashlib.sha256(raw).hexdigest()
+            except Exception:
+                for account in new_accounts:
+                    keychain(account, delete=True)
+                raise
             finally:
                 if os.name == "nt":
                     lock.seek(0)
                     msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+            for p in old.get('profiles', []):
+                if p.get('credentials_keychain'):
+                    try:
+                        keychain(p['credentials_keychain'], delete=True)
+                    except RuntimeError:
+                        pass  # A committed config must remain usable if cleanup is denied.
 
 
 def endpoint(profile, models=False):

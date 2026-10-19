@@ -39,16 +39,21 @@ Applicable revisions are placed in a separate, editable **Replacement** area. Re
 
 - Supports inline math, single-line displayed equations and multiline alignment, including standalone `align` and `aligned` environments.
 - Keeps the target passage separate from preceding and following context, so the requested editing scope is clear.
-- Refuses an overwrite if the document or selection has changed; asks for a narrower target when complex objects such as references or footnotes are included.
+- Converts `\eqref{…}`, `\ref{…}` and `\cite{…}` into native LyX objects so the document resolves their numbers and citations.
+- Refuses an overwrite if the document or selection has changed. Applying replaces the entire original selection, including selected Note/Footnote and other non-body objects; one undo restores them.
 - Follows the LyX UI language for context-menu labels. The assistant has its own persistent Chinese/English language setting.
 
 ## A local companion with a visible sending scope
 
-Installs in your user directory without modifying LyX program files. Credentials are encrypted with **Windows DPAPI** for the current account. Selections and conversations are not automatically written to configuration files. Automatic context uses a temporary local document snapshot that is deleted after reading.
+Installs in your user directory without modifying LyX program files. Credentials are protected by **Windows DPAPI / macOS Keychain**. Selections and conversations are not automatically written to configuration files. Automatic context uses a temporary local document snapshot that is deleted after reading.
 
 KaTeX and fonts are bundled for offline preview rendering. When you send a request, the passage and context in the input area go to your configured API. Inspect the complete request beforehand.
 
 ## Get started
+
+**macOS 12 or newer:** extract the complete macOS package, quit LyX and the assistant, and run `Install-macOS.command`. The app installs into `~/Applications/LyXAI.app`. Open LyX normally and use its bilingual context menu; undo with **⌘Z**. See [macOS installation and builds](docs/INSTALL.macOS.md).
+
+**Windows:**
 
 1. Extract the complete Windows package. Save your work, close LyX and the assistant, and run `Install.cmd`.
 2. Launch **LyX AI - Start LyX** from the Windows Start Menu. Select main-body prose and open the assistant from the context menu.

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import json
 import os
 from pathlib import Path
 import sys
@@ -17,13 +18,18 @@ def main():
     parser.add_argument("--configure", action="store_true")
     parser.add_argument("--install", action="store_true")
     parser.add_argument("--uninstall", action="store_true")
-    parser.add_argument("--lyx-dir", default=r"C:\Program Files\LyX 2.5")
+    parser.add_argument("--lyx-dir")
     parser.add_argument("--lyx-user-dir")
     parser.add_argument("--menu-language", choices=["auto", "zh", "en", "both"], default="auto")
     parser.add_argument("--selection-file", help="Explicit plain text file for testing or standalone use")
     parser.add_argument("--data-dir", help="Isolated settings directory")
     parser.add_argument('--self-test-preview', metavar='REPORT', help=argparse.SUPPRESS)
-    args = parser.parse_args()
+    arguments = sys.argv[1:]
+    if len(arguments) == 2 and arguments[0] == '--encoded-args':
+        arguments = json.loads(bytes.fromhex(arguments[1]).decode('utf-8'))
+        if not isinstance(arguments, list) or not all(isinstance(value, str) for value in arguments):
+            raise ValueError('Invalid encoded arguments')
+    args = parser.parse_args(arguments)
     if args.data_dir:
         os.environ["LYXAI_DATA_DIR"] = str(Path(args.data_dir).resolve())
     from lyxai.integration import capture_lyx_payload, install, uninstall
@@ -88,6 +94,12 @@ if __name__ == "__main__":
                 Path(diagnostic).write_text(type(exc).__name__ + ": " + message, encoding="utf-8")
         elif os.name == "nt":
             ctypes.windll.user32.MessageBoxW(None, message, "LyX AI", 0x10)
+        elif sys.platform == 'darwin':
+            from AppKit import NSAlert
+            alert = NSAlert.alloc().init()
+            alert.setMessageText_('LyX AI')
+            alert.setInformativeText_(message)
+            alert.runModal()
         if sys.stderr:
             print(message, file=sys.stderr)
         sys.exit(1)

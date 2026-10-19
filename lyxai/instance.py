@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 
-from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtCore import QObject, QTimer, Signal, QLockFile
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
+from shiboken6 import isValid
 
 from .core import data_dir
 
@@ -54,10 +56,18 @@ class InstanceServer(QObject):
         self.server = QLocalServer(self)
         self.server.setSocketOptions(QLocalServer.SocketOption.UserAccessOption)
         self.buffers = {}
+        self.lock = None
         self.server.newConnection.connect(self.accept_connections)
 
     def listen(self):
-        # Never remove an active server. The OS cleans named pipes when a process exits.
+        if sys.platform == 'darwin':
+            # Unix sockets survive a crash. Only the lock owner may reclaim one.
+            data_dir().mkdir(parents=True, exist_ok=True)
+            self.lock = QLockFile(str(data_dir() / 'instance.lock'))
+            self.lock.setStaleLockTime(0)
+            if not self.lock.tryLock(0):
+                return False
+            QLocalServer.removeServer(server_name())
         return self.server.listen(server_name())
 
     def accept_connections(self):
@@ -68,14 +78,15 @@ class InstanceServer(QObject):
             sock.disconnected.connect(lambda s=sock: self.cleanup(s))
             timer = QTimer(sock)
             timer.setSingleShot(True)
-            timer.timeout.connect(sock.abort)
+            timer.timeout.connect(lambda s=sock: s.abort() if isValid(s) else None)
             timer.start(3000)
             if sock.bytesAvailable():
                 self.read(sock)
 
     def cleanup(self, sock):
         self.buffers.pop(sock, None)
-        sock.deleteLater()
+        if isValid(sock):
+            sock.deleteLater()
 
     def read(self, sock):
         if sock not in self.buffers:

@@ -161,7 +161,7 @@ class SettingsDialog(QDialog):
         self.field(connection, "system", self.t("系统提示词", "System prompt"), self.system)
         self.coding_note = note("")
         connection.addRow(self.coding_note)
-        connection.addRow(note(self.t("密钥和自定义请求头使用 Windows DPAPI 加密保存。连接测试会发送一条简短请求，可能产生 API 费用。", "Keys and custom headers are saved with Windows DPAPI encryption. Connection tests send a short request and may incur API charges.")))
+        connection.addRow(note(self.t("密钥和自定义请求头使用 Windows DPAPI 或 macOS 钥匙串保护。连接测试会发送一条简短请求，可能产生 API 费用。", "Keys and custom headers are protected by Windows DPAPI or macOS Keychain. Connection tests send a short request and may incur API charges.")))
 
         generation = self.form_tab(self.t("生成参数", "Generation"))
         self.field(generation, "stream", self.t("流式输出", "Streaming"), QCheckBox(self.t("逐步显示回答", "Show response as it arrives")))
@@ -964,5 +964,5 @@ class MainWindow(QMainWindow):
         self.status.setText(self.t('正在核对原选区并应用…', 'Verifying selection and applying…'))
         def applied(result):
             self.lyx_payload = None
-            self.status.setText(self.t('已应用到 LyX。可在 LyX 按 Ctrl+Z 撤销；再次修改请重新框选问询。', 'Applied to LyX. Ctrl+Z in LyX undoes it; capture a new selection for further edits.'))
+            self.status.setText(self.t('已应用到 LyX。可在 LyX 撤销（macOS：⌘Z；Windows：Ctrl+Z）；再次修改请重新框选问询。', 'Applied to LyX. Undo in LyX (macOS: ⌘Z; Windows: Ctrl+Z); capture a new selection for further edits.'))
         self.run_bridge(lambda: apply_replacement(payload, text), applied)

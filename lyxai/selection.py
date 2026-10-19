@@ -11,6 +11,25 @@ class BodySelection:
     excluded: int = 0
 
 
+def reference_text(kind, params):
+    """Keep reference commands and keys intact during the AI round trip."""
+    citation = kind == 'CommandInset citation'
+    key = params.get('key' if citation else 'reference', '')
+    if not key:
+        return ''
+    command = params.get('command', 'cite' if citation else 'ref')
+    options = ''
+    if citation:
+        before, after = params.get('before', ''), params.get('after', '')
+        if before:
+            options = '[' + before + '][' + after + ']'
+        elif after:
+            options = '[' + after + ']'
+    elif params.get('nolink') == 'true':
+        command += '*'
+    return '\\' + command + options + '{' + key + '}'
+
+
 def extract_body(source: str) -> BodySelection:
     """Read LyX paragraphs and a small, explicit set of inline insets.
 
@@ -38,7 +57,7 @@ def extract_body(source: str) -> BodySelection:
             keep = kind == 'Formula' or kind.startswith(("Formula ", "Quotes ", "space ", "Newline ", "CommandInset citation", "CommandInset ref", "Flex "))
             if not keep and not suppressed:
                 excluded += 1
-            stack.append((suppressed or not keep, kind))
+            stack.append((suppressed or not keep, kind, {}))
             if len(stack) > 128:
                 raise ValueError("LyX inset nesting exceeds supported depth / 选区嵌套过深")
             if not any(frame[0] for frame in stack) and not deleted:
@@ -54,7 +73,9 @@ def extract_body(source: str) -> BodySelection:
         if stripped == r"\end_inset":
             if not stack:
                 raise ValueError("Unbalanced LyX inset / LyX 选区结构不完整")
-            stack.pop()
+            hidden, kind, params = stack.pop()
+            if not hidden and not deleted and kind in ('CommandInset citation', 'CommandInset ref'):
+                output.append(reference_text(kind, params))
             continue
         if suppressed:
             continue
@@ -81,12 +102,12 @@ def extract_body(source: str) -> BodySelection:
             if stack[-1][1] == 'Formula' or stack[-1][1].startswith("Formula "):
                 output.append("\n" + line)
                 continue
-            # Formula continuation lines contain raw LaTeX; retain those lines.
-            # Citation and cross-reference IDs retain meaning without exporting
-            # the surrounding document or bibliography.
-            match = re.fullmatch(r'(?:key|reference) "(.*)"', stripped)
+            if stripped.startswith('LatexCommand '):
+                stack[-1][2]['command'] = stripped.split(' ', 1)[1]
+                continue
+            match = re.fullmatch(r'(key|reference|before|after|nolink) "(.*)"', stripped)
             if match:
-                output.append("[" + match[1] + "]")
+                stack[-1][2][match[1]] = match[2]
                 continue
             if stripped.startswith(("status ", "LatexCommand ", "literal ", "name ", "plural ", "caps ", "nolink ")) or re.match(r'^[a-z_]+ "', stripped):
                 continue

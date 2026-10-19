@@ -13,9 +13,9 @@ Structured LyX import excludes note/footnote/margin/block insets from selections
 
 Ten prompt templates are available. Upgrading appends new presets without replacing user edits. The assistant UI language is saved immediately and restored on the next launch.
 
-Keep the original document and selection unchanged while waiting. Changed targets or structural objects (notes/references/tracked changes/tables) are refused. Select complete math objects from the body, not portions inside formulas. Markdown complex layouts are not reconstructed on writeback.
+Keep the original document and selection unchanged while waiting. Changed targets, unresolved tracked changes and mixed paragraph layouts are refused. References such as `\eqref`, `\ref` and `\cite` become native objects. Applying replaces the entire selection, including selected notes, footnotes and other non-body objects; one undo restores them. Select complete math objects from the body, not portions inside formulas. Markdown complex layouts are not reconstructed on writeback.
 
-Settings use Windows DPAPI. Live context uses a temporary local snapshot deleted after reading. Native LyX clipboard/paste/undo and offline formula rendering have been tested. Real provider accounts and desktop context-menu clicks still need short acceptance. See [upgrade instructions](UPGRADE.zh-CN.md).
+Settings use Windows DPAPI or macOS Keychain. For macOS installation, see [the macOS guide](INSTALL.macOS.md). Live context uses a temporary local snapshot deleted after reading. Native LyX clipboard/paste/undo and offline formula rendering have been tested. Real provider accounts and desktop context-menu clicks still need short acceptance. See [upgrade instructions](UPGRADE.zh-CN.md).
 
 Manual menu removal:
 
