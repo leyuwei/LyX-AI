@@ -1,0 +1,109 @@
+\begin{lemma}
+If $r\geq 0$ and $\rho\geq 3/2$, then $G\left(\omega\right)$ in \eqref{eq:trancedental_eq} satisfies
+\[
+G\left(\omega\right)\leq c\rho=\pi,\qquad 0<\omega<\frac{c}{\pi m+r}.
+\]
+\end{lemma}
+
+\begin{proof}
+By Lemma \ref{lem:client-derivative-criterion}, the denominator of $G\left(\omega\right)$ is positive. Normalize the sampling rate by setting
+\[
+x=\frac{\pi m+r}{c}\omega,\qquad
+a=\frac{cm}{\pi m+r}.
+\]
+Then $0<x<1$, $m\omega=ax$, and, since $r\geq 0$ and $\pi=c\rho$,
+\[
+0<a\leq \frac{1}{\rho}\leq \frac{2}{3}.
+\]
+In particular, $1-m\omega=1-ax>0$ throughout the interval.
+
+The nonlinear term in the numerator of $G\left(\omega\right)$ can be written as
+\[
+\begin{aligned}
+&(1-m\omega)^2\omega
+\left(\frac{c}{(\pi m+r)\omega}\right)^{\frac{1}{1-m\omega}}\\
+&\qquad=
+\frac{c(1-ax)^2}{\pi m+r}\exp\left(
+\frac{ax}{1-ax}\ln\frac{1}{x}
+\right).
+\end{aligned}
+\]
+Let $z=\frac{ax}{1-ax}\ln(1/x)$. Since $x\ln(1/x)\leq 1-x$,
+\[
+0\leq z\leq \frac{a(1-x)}{1-ax}\leq a\leq \frac{2}{3}.
+\]
+For $0\leq z\leq 2/3$, the exponential series gives $e^z\leq 1+2z$. Therefore,
+\[
+\begin{aligned}
+&(1-m\omega)^2\omega
+\left(\frac{c}{(\pi m+r)\omega}\right)^{\frac{1}{1-m\omega}}\\
+&\qquad\leq
+\frac{c(1-ax)^2}{\pi m+r}
+\left(1+\frac{2ax}{1-ax}\ln\frac{1}{x}\right).
+\end{aligned}
+\]
+
+Substituting this bound into the numerator of $G\left(\omega\right)$, and using the positivity of its denominator, shows that it suffices to prove
+\[
+\begin{aligned}
+1-ax-\ln\frac{1}{x}
++\frac{c(1-ax)^2}{\pi m+r}
+\left(1+\frac{2ax}{1-ax}\ln\frac{1}{x}\right)
+\leq
+\rho\left(1-ax-ax\ln\frac{1}{x}\right).
+\end{aligned}
+\]
+Write $L=\ln(1/x)$. Since $c/(\pi m+r)=a/m$, the right-hand side minus the left-hand side is
+\[
+F_m=(\rho-1)(1-ax)+L(1-\rho ax)
+-\frac{a}{m}(1-ax)^2-\frac{2a^2x}{m}(1-ax)L.
+\]
+As $m\geq 1$, we have $F_m\geq F$, where
+\[
+F=(\rho-1)(1-ax)+L(1-\rho ax)
+-a(1-ax)^2-2a^2x(1-ax)L.
+\]
+Thus it remains to show that $F\geq 0$.
+
+The coefficient of $\rho$ in $F$ is $1-ax(1+L)$. Because $x(1+\ln(1/x))\leq 1$ and $a\leq 2/3$, this coefficient is positive. Hence $F$ is bounded below by its value at $\rho=3/2$. At that value, write
+\[
+F=C(a)+B(a)L,
+\]
+where
+\[
+C(a)=\frac{1}{2}(1-ax)-a(1-ax)^2,\qquad
+B(a)=1-\frac{3}{2}ax-2a^2x(1-ax).
+\]
+Both $C(a)$ and $B(a)$ decrease with $a$ on $(0,2/3]$. Indeed,
+\[
+C'(a)=-1-\frac{x}{2}+4ax-3a^2x^2
+\leq -\frac{4}{3}\left(x-\frac{13}{16}\right)^2-\frac{23}{192}<0,
+\]
+and
+\[
+B'(a)=x\left(-\frac{3}{2}-4a+6a^2x\right)
+\leq x\left(-\frac{3}{2}+2a(3a-2)\right)<0.
+\]
+Since $L>0$, replacing $a$ by $2/3$ therefore gives a lower bound:
+\[
+F\geq F\left(\frac{3}{2},\frac{2}{3},x\right)
+=
+\frac{(3-2x)(8x-3)}{54}
++(1-x)\ln\frac{1}{x}
+-\frac{8}{9}\left(1-\frac{2x}{3}\right)x\ln\frac{1}{x}.
+\]
+For $0<x<1$, we have $\ln(1/x)\geq 1-x$ and
+$x\ln(1/x)\leq (1-x^2)/2$. The latter follows by integrating
+$1/t\leq(1+t^{-2})/2$ from $x$ to $1$. Applying these bounds yields
+\[
+\begin{aligned}
+F
+&\geq \frac{(3-2x)(8x-3)}{54}
++(1-x)^2
+-\frac{4}{9}\left(1-\frac{2x}{3}\right)(1-x^2)\\
+&=\frac{14\left(x-\frac{1}{2}\right)^2+16(1-x)^3+\frac{3}{2}}{54}>0.
+\end{aligned}
+\]
+Thus $F_m\geq F>0$, which proves the required inequality and hence
+$G\left(\omega\right)\leq c\rho=\pi$.
+\end{proof}

@@ -135,14 +135,21 @@ class WindowsLyXServer:
         with tempfile.TemporaryDirectory(prefix='lyxai-') as folder:
             path = Path(folder) / 'snapshot.lyx'
             self.command('buffer-export', 'lyx ' + str(path).replace('\\', '/'))
-            if sys.platform == 'darwin':
-                # macOS LyX acknowledges an export before its worker finishes.
-                deadline = time.monotonic() + self.timeout
-                while not path.exists() and time.monotonic() < deadline:
-                    time.sleep(.02)
-            if not path.exists() or path.stat().st_size > 16_000_000:
-                raise RuntimeError('Unable to export current LyX buffer')
-            return path.read_text(encoding='utf-8-sig')
+            # Both Windows and macOS may acknowledge an export before its
+            # worker has published the complete file. Never parse a partial one.
+            deadline = time.monotonic() + self.timeout
+            while True:
+                try:
+                    if path.stat().st_size > 16_000_000:
+                        raise RuntimeError('LyX snapshot exceeds size limit')
+                    snapshot = path.read_text(encoding='utf-8-sig')
+                    if r'\begin_body' in snapshot and snapshot.rstrip().endswith(r'\end_document'):
+                        return snapshot
+                except (OSError, UnicodeError):
+                    pass
+                if time.monotonic() >= deadline:
+                    raise RuntimeError('Unable to export complete current LyX buffer')
+                time.sleep(.02)
 
 
 if sys.platform == 'darwin':
@@ -155,8 +162,13 @@ else:
 
 
 def automatic_context(native, snapshot, radius=1800):
-    target = extract_body(native).text
+    # Copy/export rebase graphics paths differently. Match their semantic place
+    # in the prose, not a clipboard-specific spelling of the resource path.
+    def canonical(text):
+        return re.sub(r'\\includegraphics\{[^{}\n]*\}', '[Graphics]', text)
+    target = canonical(extract_body(native).text)
     body = extract_body(snapshot)
+    body.text = canonical(body.text)
     # A repeated target is ambiguous: never silently pick the first occurrence.
     if body.text.count(target) != 1:
         raise ValueError('正文中无法唯一定位选区，请扩大原文选区或手动补充上下文。 / Target is ambiguous in body text.')
@@ -198,6 +210,8 @@ def load_context(payload, stem=None, radius=1800, include_context=True):
 def apply_replacement(payload, replacement, stem=None):
     from .integration import capture_lyx_payload
     from .replacement import replacement_fragment, source_destination, source_fragment, latex_input, native_paragraphs, body_insets, paragraph_boundaries
+    from .latex_import import convert_latex
+    from .structure import protected_objects, require_preserved, restore_objects, merge_metadata, OBJECT
     with LyXServer(stem or pipe_name(payload.get('lyx_user_dir'))) as server:
         if not payload.get('filename') or server.command('server-get-filename') != payload['filename']:
             raise ValueError('当前 LyX 文档已变化，请回原文或从新文档重新问询。 / LyX document changed; return to the original document or ask from the new one.')
@@ -225,7 +239,8 @@ def apply_replacement(payload, replacement, stem=None):
         # The endpoint caret may be inside ERT while the selection spans body
         # layouts. Only infer an interior for a single unwrapped paragraph.
         target_paragraphs = native_paragraphs(template)
-        if not source and layout == 'Plain Layout' and len(target_paragraphs) == 1 and target_paragraphs[0].layout == 'Standard' and not list(body_insets(target_paragraphs[0].body)):
+        source_hint = r'\backslash' in template or source_destination(payload['native'])
+        if not source and source_hint and layout == 'Plain Layout' and len(target_paragraphs) == 1 and target_paragraphs[0].layout in ('Standard', 'Plain Layout') and not list(body_insets(target_paragraphs[0].body)):
             source = 'interior'
         imported = None
         fallback = False
@@ -235,36 +250,57 @@ def apply_replacement(payload, replacement, stem=None):
         else:
             # Latex structures must be parsed with the live document's modules
             # and preamble; the normal serializer remains lossless for formulas.
-            imported = latex_input(replacement, server.snapshot)
-            fragment = None if imported is not None else replacement_fragment(template, replacement)
-            if fragment:
+            snapshot = None
+            def document():
+                nonlocal snapshot
+                if snapshot is None:
+                    snapshot = server.snapshot()
+                return snapshot
+            imported = latex_input(replacement, document, payload.get('lyx_user_dir'))
+            if imported is not None:
+                objects = protected_objects(payload['native'], payload.get('filename'))
+                objects.update(require_preserved(template, imported, payload.get('filename')))
+                if any(match[0] not in objects for match in OBJECT.finditer(imported)):
+                    raise ValueError('修改稿包含未知的对象标记。 / Revision contains an unknown object token.')
+                fragment = convert_latex(imported, document(), payload.get('lyx_user_dir'))
+                fragment = merge_metadata(template, restore_objects(fragment, objects))
+                if OBJECT.search(fragment.replace('\\backslash\n', '\\')):
+                    raise ValueError('对象恢复失败，原文未修改。 / Object restoration failed; document unchanged.')
+                leading, _, trailing = paragraph_boundaries(target_paragraphs)
+                if leading or trailing:
+                    paragraphs = leading + native_paragraphs(fragment) + trailing
+                    body, depth = [], 0
+                    for p in paragraphs:
+                        while depth != p.depth:
+                            body.append('\\begin_deeper\n' if depth < p.depth else '\\end_deeper\n')
+                            depth += 1 if depth < p.depth else -1
+                        body.append('\\begin_layout ' + p.layout + '\n' + p.body + '\\end_layout\n')
+                    body.extend('\\end_deeper\n' for _ in range(depth))
+                    fragment = fragment.split(r'\begin_body', 1)[0] + '\\begin_body\n' + ''.join(body) + '\\end_body\n\\end_document\n'
+            else:
+                fragment = replacement_fragment(template, replacement)
+                if protected_objects(template):
+                    require_preserved(template, replacement + '\n' + extract_body(fragment, allow_empty=True).text)
+            if imported is None:
                 targets = paragraph_boundaries(target_paragraphs)[1]
                 rewritten = paragraph_boundaries(native_paragraphs(fragment))[1]
                 fallback = len({(p.layout, p.depth) for p in targets}) > 1 and len(targets) != len(rewritten)
-                trailing = paragraph_boundaries(target_paragraphs)[2]
-                if trailing:
-                    restore_layout = trailing[-1].layout
-                elif fallback and len(rewritten) == 1:
+                if fallback and len(rewritten) == 1:
                     restore_layout = 'Standard'
+            trailing = paragraph_boundaries(target_paragraphs)[2]
+            if trailing:
+                restore_layout = trailing[-1].layout
         if restore_layout and any(c in restore_layout for c in ';\r\n\\\0'):
             raise ValueError('Invalid LyX boundary layout')
-        if imported is not None and paragraph_boundaries(target_paragraphs)[2]:
-            tail_layout = target_paragraphs[-1].layout
-            if layout != tail_layout or target_paragraphs[0].layout == tail_layout:
-                raise ValueError('选区停在段落空边界且方向不明确，请完整选中末尾段落后应用；可保留多个布局。 / Select through the last paragraph text to disambiguate this boundary; mixed layouts are supported.')
-        set_native_clipboard(fragment, imported if imported is not None else replacement, notify_pid=payload['owner_pid'])
+        set_native_clipboard(fragment, replacement, notify_pid=payload['owner_pid'])
         if server.command('server-get-filename') != payload['filename']:
             raise ValueError('LyX document changed; nothing replaced')
         if restore_layout:
             # Deleting a cross-layout range merges its unselected suffix into
             # the first layout. Restore its role inside the same undo group.
             server.command('command-sequence', 'paste; layout ' + restore_layout)
-        elif imported is not None and paragraph_boundaries(target_paragraphs)[2]:
-            # Exclude the selected boundary newline before LaTeX import. This
-            # keeps the unselected following paragraph out of LyX's delete/merge.
-            server.command('command-sequence', 'char-backward-select; paste latex')
         else:
-            server.command('paste', 'latex') if imported is not None else server.command('paste')
+            server.command('paste')
     return {'applied': True, 'mode': mode, 'layout_fallback': fallback}
 
 

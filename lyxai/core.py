@@ -37,6 +37,19 @@ EN_PROMPT = (
     "Review the clarity and logic of the text below. Preserve facts, numbers, equations and citations. "
     "List specific issues, suggest a revision, and explain the changes. Reply in {reply_language}.\n\n{selection}"
 )
+STRUCTURE_RULES = (
+    '结构保护：完整保留目标中的公式及编号、\\label 标签名、交叉引用和文献引用键、'
+    '图表及资源、Float/Caption/Table、Minibox/Box 与其他 inset 的内容、间距和 LaTeX 源码命令。'
+    '不要删除、重命名或编造标签、文件路径和保留标记。\\lyxaiobject{...} 代表原生对象，'
+    '必须原样保留并维持相对位置；其后的注释仅供理解，不是待修改正文。'
+    'Note、Footnote 等注释内容不参与改写。修改稿保留明确的 LaTeX 布局边界。\n'
+    'Structure preservation: retain equations and numbering, \\label names, cross-reference and citation keys, '
+    'figures and assets, floats, captions, tables, minipages/boxes and other inset content, spacing and LaTeX source commands. '
+    'Do not drop, rename or invent labels, file paths or preservation tokens. '
+    'Keep every \\lyxaiobject{...} token verbatim in its relative position; it represents a native object. '
+    'Comments after tokens are context only. Do not revise Note/Footnote content. '
+    'Retain explicit LaTeX layout boundaries in the revision.'
+)
 
 
 def builtin_templates():
@@ -52,7 +65,10 @@ def builtin_templates():
         ('translate_zh', '英译中 / English to Chinese', '将目标正文译为通顺严谨的学术中文，译文必须为中文；保持事实、数字、术语、公式、标签和引用，保留必要英文缩写。解释可使用指定回答语言。'),
         ('critique', '审稿式诊断 / Critical review', '从读者和审稿人角度检查目标正文的清晰度、论证强度、假设与证据匹配。按重要程度给出具体、可操作的建议；不虚构参考文献、数据或结果。仅在依据充分时给出修改稿。'),
     ]
-    return [dict(id='builtin.'+key, name=name, prompt=prompt if key in ('academic', 'english') else prompt+'\n使用 {reply_language} 解释，仅修改目标正文。\n\n{selection}') for key, name, prompt in tasks]
+    templates = [dict(id='builtin.'+key, name=name, prompt=prompt if key in ('academic', 'english') else prompt+'\n使用 {reply_language} 解释，仅修改目标正文。\n\n{selection}') for key, name, prompt in tasks]
+    for item in templates:
+        item['prompt'] = item['prompt'].replace('{selection}', STRUCTURE_RULES + '\n\n{selection}')
+    return templates
 
 
 def add_builtin_templates(config):

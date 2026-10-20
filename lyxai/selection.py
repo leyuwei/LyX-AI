@@ -30,12 +30,8 @@ def reference_text(kind, params):
     return '\\' + command + options + '{' + key + '}'
 
 
-def extract_body(source: str, include_ert=False, allow_empty=False) -> BodySelection:
-    """Read LyX paragraphs and a small, explicit set of inline insets.
-
-    Unknown block insets are omitted, rather than guessed to be body prose.
-    Notes/footnotes/margin notes/figures/tables/branches are never traversed.
-    """
+def extract_body(source: str, include_ert=True, allow_empty=False) -> BodySelection:
+    """Read document content, including nested objects; omit annotations only."""
     if len(source) > 16_000_000:
         raise ValueError("LyX selection is too large / 选区过大，请缩小范围")
     lines = source.replace("\r\n", "\n").splitlines()
@@ -54,10 +50,10 @@ def extract_body(source: str, include_ert=False, allow_empty=False) -> BodySelec
         suppressed = any(frame[0] for frame in stack)
         if stripped.startswith(r"\begin_inset "):
             kind = stripped[len(r"\begin_inset "):]
-            keep = (include_ert and kind == 'ERT') or kind == 'Formula' or kind.startswith(("Formula ", "Quotes ", "space ", "Newline ", "CommandInset citation", "CommandInset ref", "Flex "))
+            keep = not kind.startswith(('Note ', 'Foot', 'Marginal')) and (include_ert or kind != 'ERT')
             if not keep and not suppressed:
                 excluded += 1
-            stack.append((suppressed or not keep, kind, {}))
+            stack.append((suppressed or not keep, kind, {'depth': layout_depth}))
             if len(stack) > 128:
                 raise ValueError("LyX inset nesting exceeds supported depth / 选区嵌套过深")
             if not any(frame[0] for frame in stack) and not deleted:
@@ -74,8 +70,13 @@ def extract_body(source: str, include_ert=False, allow_empty=False) -> BodySelec
             if not stack:
                 raise ValueError("Unbalanced LyX inset / LyX 选区结构不完整")
             hidden, kind, params = stack.pop()
-            if not hidden and not deleted and kind in ('CommandInset citation', 'CommandInset ref'):
-                output.append(reference_text(kind, params))
+            if not hidden and not deleted:
+                if kind in ('CommandInset citation', 'CommandInset ref'):
+                    output.append(reference_text(kind, params))
+                elif kind == 'CommandInset label' and params.get('name'):
+                    output.append('\\label{' + params['name'] + '}')
+                elif kind == 'Graphics' and params.get('filename'):
+                    output.append('\\includegraphics{' + params['filename'] + '}')
             continue
         if suppressed:
             continue
@@ -89,8 +90,10 @@ def extract_body(source: str, include_ert=False, allow_empty=False) -> BodySelec
             if not stack:
                 output.append("\n\n")
                 deleted = False
-            elif include_ert and stack[-1][1] == 'ERT':
+            elif stack[-1][1] == 'ERT':
                 output.append('\n')
+            elif not stack[-1][1].startswith(('Flex ', 'Argument ', 'Caption ')):
+                output.append('\n\n')
             continue
         if stripped.startswith(r"\change_deleted"):
             deleted = True
@@ -107,9 +110,15 @@ def extract_body(source: str, include_ert=False, allow_empty=False) -> BodySelec
             if stripped.startswith('LatexCommand '):
                 stack[-1][2]['command'] = stripped.split(' ', 1)[1]
                 continue
-            match = re.fullmatch(r'(key|reference|before|after|nolink) "(.*)"', stripped)
+            match = re.fullmatch(r'(key|reference|before|after|nolink|name) "(.*)"', stripped)
             if match:
                 stack[-1][2][match[1]] = match[2]
+                continue
+            if stack[-1][1] == 'Graphics' and stripped.startswith('filename '):
+                stack[-1][2]['filename'] = stripped[9:].strip('"')
+                continue
+            # Parameters and table XML live outside child paragraph layouts.
+            if layout_depth <= stack[-1][2]['depth']:
                 continue
             if stripped.startswith(("status ", "LatexCommand ", "literal ", "name ", "plural ", "caps ", "nolink ")) or re.match(r'^[a-z_]+ "', stripped):
                 continue

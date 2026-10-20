@@ -100,11 +100,12 @@ class LiveDestinationTests(unittest.TestCase):
         self.assertFalse(any(call.args[0] == 'copy' for call in self.server.command.call_args_list))
 
     def test_latex_text_uses_native_importer_and_current_document(self):
-        with patch('lyxai.bridge.LyXServer', return_value=self.server), patch('lyxai.integration.capture_lyx_payload', return_value=self.selection), patch('lyxai.bridge.set_native_clipboard') as clipboard:
+        with patch('lyxai.bridge.LyXServer', return_value=self.server), patch('lyxai.integration.capture_lyx_payload', return_value=self.selection), patch('lyxai.bridge.set_native_clipboard') as clipboard, patch('lyxai.latex_import.convert_latex', return_value=native('Converted')) as converter:
             apply_replacement(self.payload, r'\textbf{Bold} $x=1$', stem='test')
-        self.assertEqual(self.server.command.call_args.args, ('paste', 'latex'))
+        self.assertEqual(self.server.command.call_args.args, ('paste',))
         self.assertEqual(clipboard.call_args.args[1], r'\textbf{Bold} $x=1$')
-        self.assertIsNone(clipboard.call_args.args[0])  # Do not leave stale native text on the clipboard.
+        self.assertIn('Converted', clipboard.call_args.args[0])
+        self.assertEqual(converter.call_args.args[:2], (r'\textbf{Bold} $x=1$', self.server.snapshot.return_value))
 
     def test_ert_interior_with_standard_clipboard_layout_uses_live_layout(self):
         self.layout = 'Plain Layout'
@@ -159,11 +160,10 @@ class RegionSerializationTests(unittest.TestCase):
         self.assertIn('\\begin_layout Lemma\n', result)
         self.assertIn('\\begin_inset Formula $x$', result)
 
-    def test_ert_is_available_only_for_selected_import_not_body_context(self):
+    def test_ert_is_available_in_selection_and_context(self):
         ert = '\\begin_inset ERT\nstatus open\n\\begin_layout Plain Layout\n\\backslash\ntextbf{Old source}\n\\end_layout\n\\end_inset'
         selection = native(ert)
-        with self.assertRaisesRegex(ValueError, 'No body text'):
-            extract_body(selection)
+        self.assertEqual(extract_body(selection).text, r'\textbf{Old source}')
         self.assertEqual(extract_body(selection, include_ert=True).text, r'\textbf{Old source}')
         self.assertEqual(source_destination(selection), 'object')
         result = source_fragment(selection, '\\textbf{New}\n$x=1$', 'object')
@@ -172,7 +172,7 @@ class RegionSerializationTests(unittest.TestCase):
         self.assertNotIn('\\begin_inset Formula', result)
 
     def test_source_interior_preserves_backslashes_and_cannot_inject_native_insets(self):
-        original = native(r'\textbf{Old}', 'Plain Layout')
+        original = native('\\backslash\ntextbf{Old}', 'Plain Layout')
         self.assertEqual(source_destination(original), 'interior')
         result = source_fragment(original, r'\emph{New $x$}', 'interior')
         self.assertIn('\\begin_layout Plain Layout\n', result)

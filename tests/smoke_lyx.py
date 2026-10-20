@@ -60,9 +60,27 @@ def export_latex(server, path):
     raise AssertionError('LaTeX export did not complete: ' + str(path))
 
 
+def compile_exports(folder, names):
+    engine = shutil.which('pdflatex')
+    if engine:
+        for name in names:
+            result = subprocess.run([engine, '-interaction=nonstopmode', '-halt-on-error', '-no-shell-escape', name], cwd=folder, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=20, creationflags=0x08000000)
+            assert result.returncode == 0, result.stdout.decode('utf-8', 'replace')[-3000:]
+            assert (folder / name.replace('.tex', '.pdf')).exists()
+        print('Native structure exports compile to PDF with shell escape disabled: OK', flush=True)
+
+
 def worker(desktop):
     from lyxai.bridge import LyXServer, load_context, apply_replacement, native_body
     from lyxai.integration import capture_lyx_payload
+    import lyxai.bridge as bridge
+    publish = bridge.set_native_clipboard
+    last_fragment = None
+    def record_fragment(native, text, **kwargs):
+        nonlocal last_fragment
+        last_fragment = native
+        return publish(native, text, **kwargs)
+    bridge.set_native_clipboard = record_fragment
     lyx = Path(r'C:\Program Files\LyX 2.5')
     with tempfile.TemporaryDirectory(prefix='lyxai-native-') as tmp:
         folder = Path(tmp)
@@ -82,10 +100,16 @@ def worker(desktop):
         start.lpDesktop = desktop
         start.dwFlags = subprocess.STARTF_USESHOWWINDOW
         start.wShowWindow = 0
-        proc = subprocess.Popen([str(lyx/'bin/LyX.exe'), '-userdir', str(user), '-n', str(doc)], env=env, startupinfo=start, creationflags=0x08000000, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        diagnostic = open(folder / 'lyx-process.log', 'wb')
+        proc = subprocess.Popen([str(lyx/'bin/LyX.exe'), '-userdir', str(user), '-n', str(doc)], env=env, startupinfo=start, creationflags=0x08000000, stdout=diagnostic, stderr=diagnostic)
         try:
-            with LyXServer(stem, timeout=8) as server:
+            with LyXServer(stem, timeout=20) as server:
                 assert server.command('server-get-filename').replace('/', '\\').casefold() == str(doc).casefold()
+                server.timeout = 8
+                if os.environ.get('LYXAI_STRUCTURES_ONLY'):
+                    from structures_check import check as check_structures
+                    compile_exports(folder, check_structures(server, folder, stem))
+                    return
                 baseline = server.snapshot()
                 for action in ('buffer-begin', 'paragraph-down', 'paragraph-select', 'copy'):
                     server.command(action)
@@ -310,6 +334,15 @@ def worker(desktop):
                 server.command('undo')
                 assert native_body(server.snapshot()) == native_body(mixed_baseline)
                 print('LaTeX import at an empty clipboard boundary preserves the unselected proof; one undo: OK')
+                server.command('command-sequence', 'buffer-begin; ' + 'paragraph-down; ' * 5 + 'paragraph-up-select; ' * 4 + 'copy')
+                assert server.command('server-get-layout') == 'Theorem'
+                apply_replacement(mixed_payload, r'\begin{theorem}Reverse theorem.\end{theorem}\begin{proof}Reverse proof.\end{proof}' + '\n\nReverse body.\n\n' + r'\begin{theorem}Reverse second theorem.\end{theorem}', stem)
+                changed = server.snapshot()
+                assert [p.layout for p in native_paragraphs(changed)] == ['Standard'] + expected + ['Standard'], native_body(changed)
+                assert 'Second proof.' in native_paragraphs(changed)[-2].body
+                server.command('undo')
+                assert native_body(server.snapshot()) == native_body(mixed_baseline)
+                print('Reverse mixed-layout selection at an empty boundary preserves the unselected proof; one undo: OK')
                 server.command('command-sequence', select_mixed)
                 mixed_revision = (r'\begin{theorem}[First bound]\label{thm:mixed}First revised theorem $x=2$.\end{theorem}' + '\n\n'
                                   + r'\begin{proof}First revised proof.\end{proof}' + '\n\nBody ' + '\n```latex\n'
@@ -330,16 +363,17 @@ def worker(desktop):
                 assert native_body(server.snapshot()) == native_body(mixed_baseline)
                 assert mixed.read_bytes() == mixed_disk
                 print('Multiple theorem/proof environments with inline ERT and mixed LaTeX fences export real commands and labels; one undo: OK')
-                engine = shutil.which('pdflatex')
-                if engine:
-                    for name in ('regions-export.tex', 'regions-source-export.tex', 'mixed-export.tex'):
-                        result = subprocess.run([engine, '-interaction=nonstopmode', '-halt-on-error', '-no-shell-escape', name], cwd=folder, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=20, creationflags=0x08000000)
-                        assert result.returncode == 0, result.stdout.decode('utf-8', 'replace')[-3000:]
-                        assert (folder / name.replace('.tex', '.pdf')).exists()
-                    print('Native theorem title/label, ERT formulas and mixed environments compile to PDF with shell escape disabled: OK')
+                from structures_check import check as check_structures
+                structure_exports = check_structures(server, folder, stem)
+                compile_exports(folder, ['regions-export.tex', 'regions-source-export.tex', 'mixed-export.tex'] + structure_exports)
         finally:
+            failed = sys.exc_info()[0] is not None
             proc.terminate()
             proc.wait(timeout=5)
+            diagnostic.close()
+            if failed:
+                print('LyX diagnostics:', (folder / 'lyx-process.log').read_text(encoding='utf-8', errors='replace')[-4000:], flush=True)
+                (ROOT / '.test-runtime/native-last-fragment.lyx').write_text(last_fragment or '', encoding='utf-8')
 
 
 def check():
@@ -376,7 +410,7 @@ def check():
         try:
             start = subprocess.STARTUPINFO()
             start.lpDesktop = name
-            result = subprocess.run([sys.executable, '-u', str(Path(__file__).resolve()), '--worker', name], startupinfo=start, capture_output=True, timeout=90, creationflags=0x08000000)
+            result = subprocess.run([sys.executable, '-u', str(Path(__file__).resolve()), '--worker', name], startupinfo=start, capture_output=True, timeout=120, creationflags=0x08000000)
             print(result.stdout.decode('utf-8', errors='replace'))
             if result.returncode:
                 raise RuntimeError(result.stderr.decode('utf-8', errors='replace'))
@@ -397,7 +431,7 @@ def check():
             u.SetProcessWindowStation(original)
         start = subprocess.STARTUPINFO()
         start.lpDesktop = name + '\\default'
-        subprocess.run([sys.executable, '-u', str(Path(__file__).resolve()), '--worker', start.lpDesktop], startupinfo=start, check=True, timeout=90, creationflags=0x08000000)
+        subprocess.run([sys.executable, '-u', str(Path(__file__).resolve()), '--worker', start.lpDesktop], startupinfo=start, check=True, timeout=120, creationflags=0x08000000)
     finally:
         if desktop:
             u.CloseDesktop(desktop)
@@ -406,6 +440,8 @@ def check():
 
 if __name__ == '__main__':
     started = time.perf_counter()
+    if '--structures-only' in sys.argv:
+        os.environ['LYXAI_STRUCTURES_ONLY'] = '1'
     if '--worker' in sys.argv:
         worker(sys.argv[-1])
     else:

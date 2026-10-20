@@ -31,6 +31,23 @@ class PersistenceTests(unittest.TestCase):
         self.addCleanup(lambda: shiboken6.delete(w))
         return w
 
+    def test_manually_edited_target_retains_structure_reference_without_overwriting_edits(self):
+        from lyxai.selection import extract_body
+        document = (Path(__file__).resolve().parents[1] / 'examples/objects-demo.lyx').read_text(encoding='utf-8')
+        plain = extract_body(document).text
+        w = self.window(plain)
+        w.lyx_payload = dict(native=document, text=plain)
+        w.prompt.setPlainText('Custom prompt {selection}')
+        w.selection.setPlainText(plain.replace('Original figure', 'My edited caption'))
+        request = w.initial_messages()[-1]['content']
+        target, reference = request.split('【原选区结构参考 / Original selection structure】')
+        self.assertIn('My edited caption', target)
+        self.assertNotIn('Original figure', target)
+        self.assertIn(r'\label{fig:sample}', reference)
+        self.assertIn(r'\lyxaiobject{', reference)
+        self.assertIn('The edited target above takes priority', reference)
+        self.assertIn('Structure preservation:', request)
+
     def answer(self, w, text='[REVISED]Revised $x$[/REVISED]', followup=False):
         with patch('lyxai.ui.NetworkJob'):
             w.run_request((w.history if followup else []) + [{'role': 'user', 'content': 'Question with 中文 100%_literal'}], followup=followup)
@@ -140,7 +157,10 @@ class PersistenceTests(unittest.TestCase):
         w.selection.setPlainText('User edited target')
         message = w.initial_messages()[-1]['content']
         self.assertIn('User edited target', message)
-        self.assertNotIn('Original theorem.', message)
+        edited_target, structure_reference = message.split('【原选区结构参考 / Original selection structure】')
+        self.assertNotIn('Original theorem.', edited_target)
+        self.assertIn(r'\begin{theorem}', structure_reference)
+        self.assertIn('The edited target above takes priority', structure_reference)
 
     def test_preference_changes_reach_disk_automatically_without_closing(self):
         w = self.window()

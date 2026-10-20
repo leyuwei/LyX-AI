@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import sys
 import uuid
 
 from PySide6.QtCore import Qt, QTimer, QThread, Signal, QUrl, QRect
@@ -25,8 +26,9 @@ from .history import HistoryStore, timestamp, transcript
 from . import __version__
 
 
+UI_FONT_SIZE = 11 if sys.platform == 'darwin' else 10
 STYLE = """
-QWidget { font-family: 'Segoe UI', 'Microsoft YaHei UI'; font-size: 10pt; color: #22364a; background: #ffffff; }
+QWidget { font-family: 'Segoe UI', 'Microsoft YaHei UI'; font-size: BASE_FONTpt; color: #22364a; background: #ffffff; }
 QMainWindow, QDialog, QScrollArea { background: #ffffff; }
 QPlainTextEdit, QLineEdit, QComboBox, QListWidget, QDoubleSpinBox {
  background: white; color: #22364a; border: 1px solid #cddce5; border-radius: 8px; padding: 8px;
@@ -54,7 +56,7 @@ QLabel[muted="true"] { color: #62788a; }
 QLabel#brand { font-size: 24px; font-weight: 700; color: #174e68; }
 QWidget#promptPanel { background: #f7f3ff; border: 1px solid #d6c5ed; border-radius: 10px; }
 QWidget#promptPanel QLabel { background: transparent; color: #5e3d89; border: none; }
-QLabel#promptHeading { font-weight: 700; font-size: 11pt; }
+QLabel#promptHeading { font-weight: 700; font-size: PROMPT_FONTpt; }
 QPlainTextEdit#taskPrompt { background: #fcfaff; border: 1px solid #bfa5dd; color: #30253f; }
 QPlainTextEdit#taskPrompt:focus { background: #ffffff; border: 2px solid #8b5ab8; padding: 7px; }
 QSplitter::handle { background: #ffffff; height: 5px; }
@@ -64,6 +66,7 @@ QScrollBar::handle:vertical { background: #c2d3de; border-radius: 5px; min-heigh
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
 """
 STYLE = STYLE.replace('ARROW_ASSET', str(ASSETS / 'chevron.svg').replace('\\', '/'))
+STYLE = STYLE.replace('BASE_FONT', str(UI_FONT_SIZE)).replace('PROMPT_FONT', str(UI_FONT_SIZE + 1))
 
 
 class BridgeJob(QThread):
@@ -773,37 +776,27 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
         outer = QVBoxLayout(central)
         outer.setContentsMargins(12, 10, 12, 8)
-        top = QHBoxLayout()
+        top = QGridLayout()
         logo = QLabel()
         logo.setPixmap(QIcon(str(ASSETS / 'logo.svg')).pixmap(44, 44))
-        top.addWidget(logo)
         title = QLabel("LyX AI")
         title.setObjectName('brand')
         title.setFont(QFont("Segoe UI", 18, QFont.Weight.DemiBold))
-        top.addWidget(title)
-        self.tagline = note(self.t("选区问询与写作建议", "Selection review & writing advice"))
-        top.addWidget(self.tagline)
-        top.addStretch()
         self.language = combo([("简体中文", "zh"), ("English", "en")])
         choose(self.language, self.lang)
         self.language.setAccessibleName("Interface language")
         self.language.currentIndexChanged.connect(self.change_language)
-        top.addWidget(self.language)
         self.settings_btn = button(self.t("模型配置…", "Configure models…"), self.settings)
-        top.addWidget(self.settings_btn)
         outer.addLayout(top)
-        models = QHBoxLayout()
-        models.addWidget(QLabel(self.t("模型配置档", "Model profile")))
+        profile_label = QLabel(self.t("模型配置档", "Model profile"))
         self.profile = QComboBox()
         self.profile.setMinimumContentsLength(10)
+        self.profile.setMinimumWidth(160)
         self.profile.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.profile.setAccessibleName(self.t("当前模型配置档", "Active model profile"))
         self.fill_profiles()
         self.profile.currentIndexChanged.connect(self.profile_changed)
-        models.addWidget(self.profile, 1)
-        self.endpoint_label = note("")
-        models.addWidget(self.endpoint_label)
-        outer.addLayout(models)
+        self.toolbar_rows = [(top, ((logo, title, profile_label, self.profile), (self.language, self.settings_btn)), 24)]
         self.update_endpoint()
         panes = self.panes = QSplitter(Qt.Orientation.Vertical)
         panes.setChildrenCollapsible(False)
@@ -811,27 +804,21 @@ class MainWindow(QMainWindow):
         source = QWidget()
         sl = QVBoxLayout(source)
         sl.setContentsMargins(0, 3, 0, 0)
-        context_row = QHBoxLayout()
+        context_row = QGridLayout()
         self.auto_context = QCheckBox(self.t("自动获取正文前后文", "Automatic body context"))
         self.auto_context.setChecked(self.config.get('auto_context', True))
         self.context_radius = combo([(self.t(f"前后各 {n} 字符", f"{n} characters each side"), n) for n in (600, 1200, 1800, 4000, 8000)])
         choose(self.context_radius, self.config.get('context_radius', 1800))
         self.auto_context.toggled.connect(self.context_preferences_changed)
         self.context_radius.currentIndexChanged.connect(self.context_preferences_changed)
-        context_row.addWidget(self.auto_context)
-        context_row.addWidget(self.context_radius)
         self.context_btn = button(self.t("重新拉取", "Refresh context"), self.refresh_context)
-        context_row.addWidget(self.context_btn)
-        context_row.addStretch()
         sl.addLayout(context_row)
-        passage_row = QHBoxLayout()
         self.passage_buttons = []
         for index in range(3):
             action = button('', lambda checked=False, i=index: self.edit_passage(i))
-            passage_row.addWidget(action, 1)
             self.passage_buttons.append(action)
         self.update_passage_buttons()
-        sl.addLayout(passage_row)
+        self.toolbar_rows.append((context_row, ((self.auto_context, self.context_radius, self.context_btn), tuple(self.passage_buttons)), 34))
         self.prompt_panel = QWidget()
         self.prompt_panel.setObjectName('promptPanel')
         prompt_layout = QVBoxLayout(self.prompt_panel)
@@ -840,33 +827,32 @@ class MainWindow(QMainWindow):
         heading.setObjectName('promptHeading')
         prompt_layout.addWidget(heading)
         template_row = QGridLayout()
-        template_row.addWidget(QLabel(self.t("提示词模板", "Prompt template")), 0, 0)
+        template_label = QLabel(self.t("提示词模板", "Prompt template"))
         self.templates = QComboBox()
         self.templates.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.templates.setMinimumContentsLength(10)
+        self.templates.setMinimumWidth(140)
         self.templates.addItems([x["name"] for x in self.config["templates"]])
         self.templates.setCurrentIndex(min(self.config.get("template_index", 0), self.templates.count() - 1))
         self.templates.currentIndexChanged.connect(self.load_template)
-        template_row.addWidget(self.templates, 0, 1)
-        template_row.setColumnStretch(1, 1)
         self.save_prompt_btn = button(self.t('保存自定义', 'Save custom'), self.save_template)
-        template_row.addWidget(self.save_prompt_btn, 0, 2)
-        template_row.addWidget(button(self.t("另存模板", "Save as"), self.save_template_as), 0, 3)
-        template_row.addWidget(QLabel(self.t("回答语言", "Reply language")), 1, 0)
+        save_as = button(self.t("另存模板", "Save as"), self.save_template_as)
+        reply_label = QLabel(self.t("回答语言", "Reply language"))
         self.reply_lang = QComboBox()
         self.reply_lang.setEditable(True)
+        self.reply_lang.setMinimumWidth(140)
+        self.reply_lang.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.reply_lang.addItems(["中文", "English", "Follow original language", "日本語", "Deutsch", "Français"])
         self.reply_lang.setEditText(self.config.get("reply_language", "中文"))
-        template_row.addWidget(self.reply_lang, 1, 1, 1, 3)
+        self.toolbar_rows.append((template_row, ((template_label, self.templates), (reply_label, self.reply_lang, self.save_prompt_btn, save_as)), 56))
         prompt_layout.addLayout(template_row)
         self.prompt = QPlainTextEdit()
         self.prompt.setObjectName('taskPrompt')
         self.prompt.setAccessibleName(self.t("提示词", "Prompt"))
-        self.prompt.setMaximumHeight(160)
         self.prompt.setMinimumHeight(100)
-        prompt_layout.addWidget(self.prompt)
+        prompt_layout.addWidget(self.prompt, 1)
         prompt_layout.addWidget(note(self.t('编辑内置模板会转为用户自定义；自定义内容自动保存。', 'Editing a built-in creates a custom template. Custom edits are saved automatically.')))
-        sl.addWidget(self.prompt_panel)
+        sl.addWidget(self.prompt_panel, 1)
         self.loaded_template = -1
         self.load_template()
         self.prompt.textChanged.connect(self.prompt_changed)
@@ -967,6 +953,8 @@ class MainWindow(QMainWindow):
             action.setText(f'{name} · {size}')
             action.setAccessibleName(name)
             action.setToolTip(self.t(f'查看 / 编辑{name}（{size} 字符）', f'View / edit {name.lower()} ({size} characters)'))
+        if hasattr(self, 'action_grid') and not self._building:
+            self.adapt_layout()
 
     def edit_passage(self, index):
         if self.job or self.bridge_job:
@@ -985,9 +973,22 @@ class MainWindow(QMainWindow):
         dlg.deleteLater()
 
     def adapt_layout(self):
+        for layout, groups, margins in self.toolbar_rows:
+            widgets = sum(groups, ())
+            required = sum(max(w.minimumWidth(), w.minimumSizeHint().width())
+                           if w.sizePolicy().horizontalPolicy() != QSizePolicy.Policy.Ignored
+                           else w.minimumWidth() for w in widgets)
+            rows = (widgets,) if required + layout.horizontalSpacing() * (len(widgets) - 1) <= self.width() - margins else groups
+            for widget in widgets:
+                layout.removeWidget(widget)
+            for col in range(len(widgets)):
+                layout.setColumnStretch(col, 0)
+            for row, group in enumerate(rows):
+                for col, widget in enumerate(group):
+                    layout.addWidget(widget, row, col)
+                    if widget in (self.profile, self.templates, self.reply_lang, self.context_radius):
+                        layout.setColumnStretch(col, 1)
         compact = self.width() < 1050
-        self.tagline.setVisible(self.width() >= 1000)
-        self.endpoint_label.setVisible(self.width() >= 1000)
         if compact == self._compact_actions:
             return
         self._compact_actions = compact
@@ -1045,7 +1046,7 @@ class MainWindow(QMainWindow):
 
     def update_endpoint(self):
         p = self.active_profile()
-        self.endpoint_label.setText(PROTOCOLS[p["protocol"]])
+        self.profile.setToolTip(f'{p["name"]} · {p["model"]}\n{PROTOCOLS[p["protocol"]]}\n{p["url"]}')
 
     def persist(self, config=None):
         try:
@@ -1162,13 +1163,26 @@ class MainWindow(QMainWindow):
             raise ValueError(self.t("请先选择或粘贴文字。", "Select or paste text first."))
         if not self.prompt.toPlainText().strip():
             raise ValueError(self.t("请填写提示词。", "Enter a prompt."))
-        if self.lyx_payload and self.lyx_payload.get('native') and selection == self.lyx_payload.get('query_text', self.lyx_payload.get('text')):
+        structure_reference = None
+        if self.lyx_payload and self.lyx_payload.get('native'):
             from .replacement import structured_selection
-            selection = structured_selection(self.lyx_payload['native']) or selection
+            structured = structured_selection(self.lyx_payload['native'])
+            if selection == self.lyx_payload.get('query_text', self.lyx_payload.get('text')):
+                selection = structured or selection
+            else:
+                structure_reference = structured
         selected_with_context = compose_context(selection, self.before.toPlainText(), self.after.toPlainText())
         user = render_prompt(self.prompt.toPlainText(), selected_with_context, self.reply_lang.currentText())
+        if structure_reference:
+            user += ('\n\n【原选区结构参考 / Original selection structure】\n'
+                     '仅用于保留布局、标签、引用、资源标记和源码。以上问询原文已由用户编辑，以它为准；不要恢复用户改动过的文字或数学内容。\n'
+                     'Use this only to preserve layouts, labels, references, resource tokens and source. '
+                     'The edited target above takes priority; do not revert the user’s text or mathematical edits.\n'
+                     + structure_reference)
         user += '\n\n如需给出可直接替换的修改，请将且仅将目标正文放在 [REVISED] 与 [/REVISED] 之间，解释放在标记外。公式使用 $…$ 或 \\[ … \\]；不要重复前后文。\nFor an applicable revision, put ONLY the revised target between [REVISED] and [/REVISED]; keep explanations outside. Use $…$ or \\[ … \\] for equations.'
-        user += '\n保留目标中的 LaTeX 环境（如 theorem、proof）和源码命令；混合布局的修改稿使用明确的 LaTeX 环境边界，不要将环境变成普通文字。\nPreserve target LaTeX environments (such as theorem/proof) and source commands. Use explicit LaTeX boundaries for mixed layouts.'
+        from .core import STRUCTURE_RULES
+        if STRUCTURE_RULES not in user:
+            user += '\n\n' + STRUCTURE_RULES
         return ([{"role": "system", "content": p["system"]}] if p.get("system") else []) + [{"role": "user", "content": user}]
 
     def preview(self):

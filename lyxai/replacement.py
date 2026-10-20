@@ -20,7 +20,7 @@ THEOREMS = {'theorem': 'thm', 'lemma': 'lem', 'corollary': 'cor', 'proposition':
 UNSAFE_TEX = re.compile(r'\\(?:input|include|includegraphics|write\d*|openout|openin|read|catcode|csname|usepackage|documentclass|special|href|url|directlua|latelua|def|gdef|edef|xdef|let|newcommand|renewcommand)(?![A-Za-z])|\\(?:begin|end)_[A-Za-z]+|\\(?:begin|end)\{document\}', re.I)
 
 
-def latex_input(text, document):
+def latex_input(text, document, user_dir=None):
     """Use LyX's own LaTeX importer for structure and text formatting commands."""
     text, fences = re.subn(r'(?m)^[ \t]*```(?:latex|tex)[ \t]*\n([\s\S]*?)^[ \t]*```[ \t]*$', r'\1', text)
     source = bool(fences)
@@ -34,25 +34,37 @@ def latex_input(text, document):
     if not source and not re.search(r'(?<!\\)\\(?:[A-Za-z]+|[\\#$%&_{}~^ ,;:!])', REFERENCE.sub('', outside_math)):
         return None
     validate_tex(text)
+    clean = re.sub(r'(?m)(?<!\\)%[^\n]*', '', text)
+    braces = 0
+    for token in re.findall(r'\\(?:[A-Za-z]+|.)|[{}]', clean):
+        if token in ('{', '}'):
+            braces += 1 if token == '{' else -1
+            if braces < 0:
+                raise ValueError('LaTeX 花括号不匹配。 / Unbalanced LaTeX braces.')
+    if braces:
+        raise ValueError('LaTeX 花括号不完整。 / Incomplete LaTeX braces.')
+    for part in math_parts(clean):
+        if isinstance(part, str) and not part.startswith(('`', '~~~')) and re.search(r'(?<!\\)\$|\\[\[\]()]', part):
+            raise ValueError('公式定界符不完整。 / Incomplete math delimiter.')
     stack = []
-    for token in re.finditer(r'(?<!\\)\\(begin|end)\{([\w*]+)\}', re.sub(r'(?m)(?<!\\)%[^\n]*', '', text)):
+    for token in re.finditer(r'(?<!\\)\\(begin|end)\{([\w*:-]+)\}', re.sub(r'(?m)(?<!\\)%[^\n]*', '', text)):
         if token[1] == 'begin':
             stack.append(token[2])
         elif not stack or stack.pop() != token[2]:
             raise ValueError('LaTeX 环境不匹配。 / Unbalanced LaTeX environment.')
     if stack:
         raise ValueError('LaTeX 环境不完整。 / Incomplete LaTeX environment.')
-    environments = re.findall(r'\\begin\{([\w*]+)\}', outside_math)
+    environments = re.findall(r'\\begin\{([\w*:-]+)\}', outside_math)
     if any(env.rstrip('*') in set(THEOREMS) | set(THEOREMS.values()) for env in environments):
         document = document() if callable(document) else document
-        modules = re.search(r'\\begin_modules\n([\s\S]*?)\\end_modules', document)
-        has_theorems = modules and 'theorems-' in modules[1]
-        known_layout = any('\\begin_layout ' + name.title() in document for name in THEOREMS)
-        builtin_class = re.search(r'\\textclass (?:beamer|amsart|amsbook|svmono|svmult)\b', document)
-        if not (has_theorems or known_layout or builtin_class):
-            raise ValueError('请在 LyX 文档设置→模块中启用 AMS Theorems 后应用定理环境。 / Enable AMS Theorems in LyX Document Settings → Modules before applying theorem environments.')
-        if has_theorems:
-            text = re.sub(r'\\(begin|end)\{(' + '|'.join(THEOREMS) + r')(\*?)\}', lambda m: '\\' + m[1] + '{' + THEOREMS[m[2]] + m[3] + '}', text)
+        from .latex_import import normalize_environments, layout_configuration
+        layouts = layout_configuration(document, user_dir)[2]
+        available = set(layouts.values()) | {name.lower() for name in layouts}
+        missing = [env for env in environments if env.rstrip('*') in set(THEOREMS) | set(THEOREMS.values())
+                   and env not in available and not any(THEOREMS.get(name.lower()) == env for name in layouts)]
+        if missing:
+            raise ValueError('当前文档缺少相应布局，请启用匹配模块（例如 AMS Theorems）。 / Enable a matching module (e.g. AMS Theorems); unavailable layout: ' + ', '.join(missing))
+        text = normalize_environments(text, document, user_dir)
     # A standalone aligned/split block needs a display hull in imported LaTeX.
     return ''.join(formula_source(part) if isinstance(part, Math) else part for part in math_parts(text))
 
@@ -60,7 +72,7 @@ def latex_input(text, document):
 def validate_tex(text):
     if not text.strip() or len(text) > 200_000 or '\0' in text:
         raise ValueError('LaTeX is empty or too long / LaTeX 为空或过长')
-    if UNSAFE_TEX.search(text):
+    if UNSAFE_TEX.search(re.sub(r'(?m)(?<!\\)%[^\n]*', '', text)):
         raise ValueError('LaTeX 包含不支持的文件、链接、宏定义或执行命令。 / Unsupported file, link, macro definition or execution command in LaTeX.')
 
 
@@ -71,7 +83,7 @@ def source_destination(native):
     for start, end, raw in reversed(spans):
         outer = outer[:start] + outer[end:]
     layouts = re.findall(r'\\begin_layout ([^\n]+)', outer)
-    if layouts and set(layouts) == {'Plain Layout'}:
+    if layouts and set(layouts) == {'Plain Layout'} and r'\backslash' in outer:
         return 'interior'
     if len(layouts) == 1 and len(spans) == 1 and spans[0][2].startswith('\\begin_inset ERT\n') and not re.sub(r'(?m)^\\[^\n]*|\s+', '', outer):
         return 'object'
@@ -165,52 +177,9 @@ def paragraph_boundaries(paragraphs):
 
 
 def structured_selection(native):
-    """Give AI explicit theorem/proof boundaries and real embedded ERT commands."""
-    _, paragraphs, _ = paragraph_boundaries(native_paragraphs(native))
-    if len({p.layout for p in paragraphs}) < 2 and not any(r'\begin_inset ERT' in p.body for p in paragraphs):
-        return None
-    header = '\\begin_body\n'
-    def plain_body(body):
-        return extract_body(header + '\\begin_layout Standard\n' + body + '\n\\end_layout\n\\end_body\n', include_ert=True, allow_empty=True).text
-    result, active = [], None
-    for paragraph in paragraphs:
-        body, sources, title = paragraph.body, [], ''
-        for start, end, raw in reversed(list(body_insets(body))):
-            if raw.startswith('\\begin_inset ERT\n'):
-                sources.append(plain_body(raw))
-            elif raw.startswith('\\begin_inset CommandInset label\n'):
-                name = re.search(r'(?m)^name "([^"\n]+)"$', raw)
-                sources.append('\\label{' + name[1] + '}' if name else '')
-            elif raw.startswith('\\begin_inset Argument 1\n'):
-                inside = raw[raw.index(r'\begin_layout '):raw.rindex(r'\end_inset')]
-                title = extract_body(header + inside + '\n\\end_body\n', include_ert=True, allow_empty=True).text
-                body = body[:start] + body[end:]
-                continue
-            else:
-                continue
-            marker = f'LYXAISOURCEPLACEHOLDER{len(sources)-1}END'
-            body = body[:start] + marker + body[end:]
-        text = plain_body(body)
-        def protect_reference(match):
-            sources.append(match[0])
-            return f'LYXAISOURCEPLACEHOLDER{len(sources)-1}END'
-        text = REFERENCE.sub(protect_reference, text)
-        # Escape prose for LaTeX while retaining formula and ERT provenance.
-        text = ''.join(formula_source(p) if isinstance(p, Math) else re.sub(r'([&%#_{}])', r'\\\1', p) for p in math_parts(text))
-        for i, source in enumerate(sources):
-            text = text.replace(f'LYXAISOURCEPLACEHOLDER{i}END', source)
-        environment = paragraph.layout.lower() if paragraph.layout.lower() in THEOREMS else None
-        if environment != active or title:
-            if active:
-                result.append('\\end{' + active + '}')
-            if environment:
-                result.append('\\begin{' + environment + '}' + ('[{' + title + '}]' if title else ''))
-            active = environment
-        heading = {'Section': 'section', 'Subsection': 'subsection', 'Subsubsection': 'subsubsection', 'Paragraph': 'paragraph'}.get(paragraph.layout)
-        result.append('\\' + heading + '{' + text + '}' if heading else text)
-    if active:
-        result.append('\\end{' + active + '}')
-    return '\n\n'.join(result)
+    """Give AI all selected document structures, including nested objects."""
+    from .structure import selection_latex
+    return selection_latex(native)
 
 
 def reference_inset(match):
@@ -293,7 +262,7 @@ def replacement_fragment(original, replacement):
         body = body[:start] + body[end:]
     if r'\change_' in body:
         raise ValueError('请先接受或拒绝修订，再应用改写。 / Accept or reject tracked changes before applying.')
-    if re.search(r'\\begin_layout (?:Plain Layout|Code|LyX-Code|Verbatim)', body):
+    if re.search(r'\\begin_layout (?:Code|LyX-Code|Verbatim)', body):
         raise ValueError('请在主正文中选取完整文本和公式，不能替换嵌套对象内部。 / Select main body prose, not an inset interior.')
     leading, originals, trailing = paragraph_boundaries(native_paragraphs(original))
     if not originals:
@@ -360,7 +329,7 @@ def replacement_fragment(original, replacement):
         for line in base.body.splitlines():
             if not line.strip():
                 continue
-            if re.fullmatch(r'\\(?:lang|series|shape|family|size|color|emph) [\w-]+', line):
+            if re.fullmatch(r'\\(?:lang|series|shape|family|size|color|emph) [\w-]+|\\(?:paragraph_spacing|noindent|indent|leftindent|align)\b[^\n]*', line):
                 styles.append(line)
             elif not line.startswith('\\') or line.startswith('\\begin_inset'):
                 break

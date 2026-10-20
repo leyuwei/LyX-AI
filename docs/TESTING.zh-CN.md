@@ -8,7 +8,7 @@ Windows 本机验证。默认快速回归不操作桌面；真实 LyX 和浏览�
 python -m unittest discover -s tests -q
 ```
 
-快速回归包含 **113 项，其中 109 项通过，4 项 macOS 专用检查在 Windows 跳过，约 4 秒**。使用 Qt offscreen、本机 HTTP mock 与临时配置，不调用真实 API、不移动鼠标、不截图、不切换窗口、不启动真实 LyX。
+快速回归包含 **151 项，其中 147 项通过，4 项 macOS 专用检查在 Windows 跳过，约 4 秒**。使用 Qt offscreen、本机 HTTP mock 与临时配置，不调用真实 API、不移动鼠标、不截图、不切换窗口、不启动真实 LyX。
 
 新增检查：当前选区/光标写回、剪贴板过期内容隔离与通信失败不降级为插入；中英文版权链接指向项目主页；全局应用按钮在每个输出标签下均可见；语言保存、关闭重开及切回；旧配置模板追加、不覆盖用户编辑且不重复添加；align/aligned 等环境与内嵌定界符、标签/编号保留、不完整环境拒绝。
 
@@ -91,8 +91,32 @@ python tests/smoke_package.py
 
 - 各官方服务商和每个中转站的真实账户、网络、模型权限；尚未提供 API 密钥。
 - 用户桌面上右键菜单的显示、点击与当前 LyX 界面语言。
-- 所有自定义布局、宏和复杂 inset 组合；复杂目标采用拒绝自动覆盖策略。
+- 所有自定义布局、宏和复杂 inset 组合；合并单元格和无法可靠重建的对象以原生保留标记往返，内部内容作为只读参考。
 
 请按[覆盖升级教程](UPGRADE.zh-CN.md#无-api-的短验收)在文档副本上验收一次。测试时间为本机测量，不代表 AI 响应耗时或 GUI 冷启动延迟。
 
 本次新增功能只在 Windows 原生环境及离屏环境验收，未在 macOS 实机打包验证。macOS 原有联调说明见 [macOS 安装与构建](INSTALL.macOS.md)。`tests/smoke_macos.py` 使用独立用户目录和临时文档，验证引用在 XHTML 导出中解析为编号，以及含 Note/Footnote 选区的覆盖与完整撤销。
+
+## 结构写回专项回归
+
+快速测试包含选区标签、源码、Float/Caption/Tabular/Box 嵌套文本、参数/XML 不泄漏、注释过滤、资源标记与路径来源、重复图片不可丢失、Caption 短标题、Framed Box 类型保留、表格边框及段落间距、未知对象保留、内置模板保护规则、转换失败/未知标记在写入前停止、不完整数学和花括号拒绝。单元测试不启动转换器或 LyX。
+
+```powershell
+python tests/smoke_lyx.py --structures-only
+```
+
+专项真实检查复用一个隐藏 LyX 实例，避免为每个用例重启。实际运行 tex2lyx：用户提供的完整 lemma/proof 在 article + AMS、article + AMS by-type/extended、IEEEtran + 冲突的 AMS by-type/extended、IEEEtran 无模块四种组合下成功转换。IEEEtran 的真实写回验证原生 Lemma/Proof、公式和 MathML 对齐表格、引用键、LaTeX 导出和一次撤销。
+
+图表用例修改 Caption、表格单元格和盒内正文，检查原生 Float/Caption/Tabular/Graphics/Box、标签、图片有效路径、所有行列参数、边框、盒子宽度、hspace 和段落行距；确认 HTML 与 LaTeX 导出正确，并完整撤销。另分别进入 Caption 和 Box 的 Plain Layout 内部，确认公式成为原生数学对象而非源码。导出文件实际编译为 PDF，禁用 shell escape；样例图片使用项目自身 logo，不读取用户文件。
+
+完整回归仍用 `python tests/smoke_lyx.py`，包括以上专项检查。测试在临时文档和隐藏桌面上进行，不调用真实 AI。
+
+本次 Windows 专项原生检查约 20 秒；快速回归约 3.5 秒。图表选区另实际验证自动前后文，图片路径重定位不会导致目标匹配失败。
+
+补充回归：Windows 导出确认早于文件完成时等待完整快照，覆盖文件延迟出现、文件半写入和超时只发出一次导出命令；标签不能仅在 TeX 注释中出现来绕过保留检查，原生保留对象内部标签无需在外部重复。
+
+完整隐藏 LyX 回归已通过（约 67 秒），包含打包 EXE 的真实菜单启动/选区捕获/IPC、正反向混合布局、公式、源码、图表、Caption/Box 内部写回、导出和 PDF 编译及一次撤销。手动编辑问询原文时另测试：编辑内容优先，原生结构作为独立参考提供，不会丢失资源标记或覆盖用户改动。
+
+## 通用模块兼容性补充
+
+运行 `python tests/smoke_modules.py`，真实验证 18 个原生转换用例、4 个双向互斥组合拒绝，约 7 秒。覆盖多种期刊/图书/演示文档类及非定理模块、自定义模块；类名白名单已移除。快速回归新增 13 项测试，模块图和所有依赖排列使用临时文件检查，不调用转换器。详细范围与限制见[模块兼容性说明](MODULE-COMPATIBILITY.zh-CN.md)。新增规则后，真实 LyX 结构专项回归及 PDF 编译仍通过，约 20 秒。

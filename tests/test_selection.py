@@ -31,12 +31,12 @@ class SelectionTests(unittest.TestCase):
         result = extract_body(fragment(body + "\n" + paragraph("Second paragraph.")))
         self.assertEqual(result.text, '中文 α。强调正文$x_{i}=\\alpha$\\cite{paper2026}\n\nSecond paragraph.')
 
-    def test_excludes_margins_figures_tables_unknown_blocks(self):
+    def test_excludes_annotations_but_traverses_figures_tables_and_other_insets(self):
         for kind in ("Marginal", "Float figure", "Tabular", "Branch review", "UnknownObject"):
             with self.subTest(kind=kind):
                 result = extract_body(fragment(paragraph(f"Before\n\\begin_inset {kind}\n\\begin_layout Plain Layout\nHIDDEN\n\\end_layout\n\\end_inset\nAfter")))
-                self.assertEqual(result.text, "BeforeAfter")
-                self.assertEqual(result.excluded, 1)
+                self.assertEqual(result.text, "BeforeAfter" if kind == 'Marginal' else "BeforeHIDDEN\n\nAfter")
+                self.assertEqual(result.excluded, 1 if kind == 'Marginal' else 0)
 
     def test_changed_deleted_text_is_not_sent(self):
         result = extract_body(fragment(paragraph("A\n\\change_deleted 0 123\nDELETED\n\\change_unchanged\nB")))

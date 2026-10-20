@@ -20,9 +20,10 @@ Select a passage in the LyX document body and open the assistant from the contex
 
 | Highlight | What it gives you |
 |---|---|
-| **Automatic body context** | Reads the live document, including unsaved edits. Collects a configurable amount of surrounding prose while excluding Note, Footnote and other block objects from main-body ranges. |
+| **Automatic body context** | Reads the live document, including unsaved edits. Collects a configurable amount of surrounding content while excluding Note, Footnote and margin-note contents from main-body ranges. |
 | **Uncluttered passage controls** | A consistent white interface stays readable. Three buttons show character counts; open a dialog to inspect or edit the target and surrounding context. |
 | **Native equation writeback** | Inline, displayed and multiline align/aligned equations become editable LyX math objects, retaining supported numbering and label structures. |
+| **Figures and document structure** | Includes floats, captions, tables, box contents, labels and source in the selection. Retains native image resources and existing table borders, box widths and spacing during structured writeback. |
 | **Markdown and math preview** | Read headings, lists, tables and equations in an offline preview before using the revision. |
 | **Your models and relay services** | Separate profiles for endpoints, protocols, keys, models, generation settings, reasoning, proxies and timeouts. |
 | **Persistent preferences** | Reply language, template selection, custom prompts, model, context radius and window layout are saved automatically. Built-in prompts stay unchanged. |
@@ -43,7 +44,9 @@ Keep official endpoints and relay configurations in separate profiles. Configure
 
 ## Revise prose and equations together
 
-Apply multiple theorem/proof environments, body paragraphs and embedded LaTeX together. Plain-text paragraphs retain their individual layouts when they correspond to the original paragraphs; explicit LaTeX environments support added or removed paragraphs. Requests include the target's environment boundaries and source commands automatically.
+Apply multiple theorem/proof environments, body paragraphs and embedded LaTeX together. Conversion is checked in a temporary directory before a single native paste, resolving dependencies, defaults and exclusions from document-class and module declarations, including classes such as IEEEtran. Plain-text paragraphs retain their individual layouts when they correspond to the original paragraphs; explicit LaTeX environments support added or removed paragraphs.
+
+Built-in prompts require equations, labels, references, figures, tables, boxes and source to be preserved. Images and complex native objects travel as `\lyxaiobject{…}` tokens; ask AI to retain them verbatim in their relative positions. Missing essential structures are reported before writeback to prevent silent loss.
 
 Click **Target passage / Before / After** to inspect or edit text in a popup. Save commits changes for the next request; Cancel leaves the text unchanged. Automatic context collection still runs without opening these dialogs.
 
@@ -53,7 +56,7 @@ Applicable revisions are placed in a separate, editable **Replacement** area. Re
 - Preserves Theorem/Lemma target layouts and uses the native LyX importer for LaTeX environments and text formatting. ERT areas retain real LaTeX source for document typesetting.
 - Keeps the target passage separate from preceding and following context, so the requested editing scope is clear.
 - Converts `\eqref{…}`, `\ref{…}` and `\cite{…}` into native LyX objects so the document resolves their numbers and citations.
-- Uses the latest destination: replaces the current selection or inserts at the current caret. You may move the selection or edit the same document while waiting; switching documents blocks writeback. Replacing a selection removes selected Note/Footnote and other non-body objects; one undo restores them.
+- Uses the latest destination: replaces the current selection or inserts at the current caret. You may move the selection or edit the same document while waiting; switching documents blocks writeback. Note/Footnote contents are not sent to AI. Preservation tokens in structured revisions restore those objects; omitted annotations may be removed by a full replacement and can be restored with one undo.
 - Follows the LyX UI language for context-menu labels. The assistant has its own persistent Chinese/English language setting.
 
 ## Revisit a conversation and continue
@@ -64,7 +67,7 @@ Applicable revisions are placed in a separate, editable **Replacement** area. Re
 
 Use **History…** in the bottom toolbar. The default **AI reply** tab shows only the selected turn's answer; choose a turn to review earlier replies or follow-ups. Questions, reasoning and the full conversation have separate tabs. Search older records or load more results. Standalone startup restores the last conversation; opening a new selection from LyX starts a fresh target. Upgrades retain preferences and history.
 
-Theorem environments require a matching Theorems module in the current document; see `examples/regions-demo.lyx`. Custom macros depend on the document configuration.
+Theorem environments use layouts built into the current class or enabled through a matching Theorems module; see `examples/regions-demo.lyx`. For figures, tables and boxes, try `examples/objects-demo.lyx`. Custom macros depend on the document configuration.
 
 ## A local companion with a visible sending scope
 

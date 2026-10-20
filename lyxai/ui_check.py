@@ -8,7 +8,7 @@ from PySide6.QtCore import QEvent, QEventLoop, QObject, QTimer
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
 
 from .core import Store
-from .ui import MainWindow, SettingsDialog, HistoryDialog, PassageDialog, STYLE, choose
+from .ui import MainWindow, SettingsDialog, HistoryDialog, PassageDialog, STYLE, UI_FONT_SIZE, choose
 from .history import timestamp
 
 
@@ -22,7 +22,7 @@ def check_window(app, report_path):
         font = Path(os.environ.get('WINDIR', '')) / 'Fonts' / name
         if font.exists():
             QFontDatabase.addApplicationFont(str(font))
-    app.setFont(QFont('Segoe UI', 10))
+    app.setFont(QFont('Segoe UI', UI_FONT_SIZE))
     report_path = Path(report_path)
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report = {}
@@ -87,18 +87,53 @@ def check_window(app, report_path):
         report.update(stable_window=True, reused_browser=True, no_extra_loads=True, scroll_preserved=True)
         w.removeEventFilter(watcher)
         sizes = []
+        compact_rows = []
+        prompt_growth = {}
+        wide_width = 1280 if UI_FONT_SIZE > 10 else 1160
         for lang in ('zh', 'en'):
             choose(w.language, lang)
-            for width, height in ((640, 480), (800, 600), (1024, 600)):
+            # Large character counts must not push the context buttons out of view.
+            w.before.setPlainText('x' * 16000)
+            w.after.setPlainText('x' * 16000)
+            for width, height in ((640, 480), (800, 600), (1024, 600), (wide_width, 800)):
                 w.resize(width, height)
                 app.processEvents()
                 assert w.size().width() == width and w.size().height() == height, dict(language=lang, requested=[width, height], actual=w.size().toTuple(), minimum=w.minimumSizeHint().toTuple())
                 for button in (w.apply_btn, w.send_btn, w.history_btn):
                     assert w.centralWidget().rect().contains(button.geometry())
+                for layout, groups, _ in w.toolbar_rows:
+                    widgets = sum(groups, ())
+                    for i, widget in enumerate(widgets):
+                        assert widget.parentWidget().rect().contains(widget.geometry()), (lang, width, widget.accessibleName(), widget.geometry().getRect())
+                        assert all(not widget.geometry().intersects(other.geometry()) for other in widgets[i+1:]), (lang, width, 'overlapping controls')
+                    if width == wide_width:
+                        centers = [widget.geometry().center().y() for widget in widgets]
+                        assert max(centers) - min(centers) <= 1, (lang, centers)
+                assert w.prompt.font().pointSize() == UI_FONT_SIZE
+                assert w.settings_btn.font().pointSize() == UI_FONT_SIZE
                 sizes.append([lang, width, height])
+                if width == wide_width:
+                    compact_rows.append(lang)
+                    w.grab().save(str(report_path.with_name(report_path.stem + '-compact-' + lang + '.png')))
             w.resize(800, 600)
             app.processEvents()
             w.grab().save(str(report_path.with_name(report_path.stem + '-small-' + lang + '.png')))
+            # Extra panel height belongs to the editor, not gaps between controls.
+            w.resize(wide_width, 800)
+            w.panes.setSizes([450, 250])
+            app.processEvents()
+            panel_height, editor_height = w.prompt_panel.height(), w.prompt.height()
+            source_height, output_height = w.panes.sizes()
+            w.resize(wide_width, 1100)
+            w.panes.setSizes([source_height + 300, output_height])
+            app.processEvents()
+            panel_delta = w.prompt_panel.height() - panel_height
+            editor_delta = w.prompt.height() - editor_height
+            assert editor_delta > 100 and abs(editor_delta - panel_delta) <= 2, (lang, panel_delta, editor_delta)
+            prompt_growth[lang] = dict(panel=panel_delta, editor=editor_delta)
+            w.grab().save(str(report_path.with_name(report_path.stem + '-expanded-' + lang + '.png')))
+            w.resize(800, 600)
+            app.processEvents()
         original_height = w.status.height()
         w.status.setText('First line\nSecond line\n' + 'Long status ' * 200)
         app.processEvents()
@@ -155,7 +190,9 @@ def check_window(app, report_path):
         history.reject()
         passage.reject()
         app.setPalette(original_palette)
-        report.update(small_windows=sizes, one_line_status=True, settings_fit=True, passage_dialog=True,
+        report.update(small_windows=sizes, compact_toolbar_rows=compact_rows, ui_font_points=UI_FONT_SIZE,
+                      expanding_prompt=prompt_growth,
+                      one_line_status=True, settings_fit=True, passage_dialog=True,
                       separate_history_reply=True, dark_palette_backgrounds=backgrounds,
                       highlighted_prompt=prompt_color.name(), immutable_builtin_prompt=True, passed=True)
         w.close()

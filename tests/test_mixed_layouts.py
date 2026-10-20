@@ -98,29 +98,28 @@ class MixedDestinationTests(unittest.TestCase):
         h = self.helper
         h.selection['native'] = mixed(('Theorem', 'A.'), ('Proof', 'B.'))
         h.server.snapshot.return_value = h.selection['native']
-        with patch('lyxai.bridge.LyXServer', return_value=h.server), patch('lyxai.integration.capture_lyx_payload', return_value=h.selection), patch('lyxai.bridge.set_native_clipboard'):
+        with patch('lyxai.bridge.LyXServer', return_value=h.server), patch('lyxai.integration.capture_lyx_payload', return_value=h.selection), patch('lyxai.bridge.set_native_clipboard'), patch('lyxai.latex_import.convert_latex', return_value=mixed(('Theorem', 'A.'), ('Proof', 'B.'))):
             result = apply_replacement(h.payload, 'Unstructured one paragraph.', stem='test')
             self.assertTrue(result['layout_fallback'])
             result = apply_replacement(h.payload, 'Intro.\n\\begin{theorem}A.\\end{theorem}\n\\begin{proof}B.\\end{proof}\nEnd.', stem='test')
             self.assertFalse(result['layout_fallback'])
-            self.assertEqual(h.server.command.call_args.args, ('paste', 'latex'))
+            self.assertEqual(h.server.command.call_args.args, ('paste',))
 
     def test_latex_import_keeps_the_trailing_unselected_paragraph_out_of_the_merge(self):
         h = self.helper
         h.layout = 'Proof'
         h.selection['native'] = mixed(('Theorem', 'A.'), ('Proof', ''))
         h.server.snapshot.return_value = h.selection['native']
-        with patch('lyxai.bridge.LyXServer', return_value=h.server), patch('lyxai.integration.capture_lyx_payload', return_value=h.selection), patch('lyxai.bridge.set_native_clipboard'):
+        with patch('lyxai.bridge.LyXServer', return_value=h.server), patch('lyxai.integration.capture_lyx_payload', return_value=h.selection), patch('lyxai.bridge.set_native_clipboard'), patch('lyxai.latex_import.convert_latex', return_value=mixed(('Theorem', 'New A.'))):
             apply_replacement(h.payload, r'\begin{theorem}New A.\end{theorem}', stem='test')
-        self.assertEqual(h.server.command.call_args.args, ('command-sequence', 'char-backward-select; paste latex'))
+        self.assertEqual(h.server.command.call_args.args, ('command-sequence', 'paste; layout Proof'))
 
-    def test_ambiguous_reverse_latex_boundary_stops_before_clipboard_or_paste(self):
+    def test_reverse_latex_boundary_uses_native_edges_without_rejecting_mixed_layouts(self):
         h = self.helper
         h.layout = 'Theorem'
         h.selection['native'] = mixed(('Theorem', 'A.'), ('Proof', ''))
         h.server.snapshot.return_value = h.selection['native']
-        with patch('lyxai.bridge.LyXServer', return_value=h.server), patch('lyxai.integration.capture_lyx_payload', return_value=h.selection), patch('lyxai.bridge.set_native_clipboard') as clipboard:
-            with self.assertRaisesRegex(ValueError, 'mixed layouts are supported'):
-                apply_replacement(h.payload, r'\begin{theorem}New A.\end{theorem}', stem='test')
-            clipboard.assert_not_called()
-        self.assertFalse(any(call.args[0] in ('paste', 'command-sequence') for call in h.server.command.call_args_list))
+        with patch('lyxai.bridge.LyXServer', return_value=h.server), patch('lyxai.integration.capture_lyx_payload', return_value=h.selection), patch('lyxai.bridge.set_native_clipboard') as clipboard, patch('lyxai.latex_import.convert_latex', return_value=mixed(('Theorem', 'New A.'))):
+            apply_replacement(h.payload, r'\begin{theorem}New A.\end{theorem}', stem='test')
+        self.assertEqual([p.layout for p in native_paragraphs(clipboard.call_args.args[0])], ['Theorem', 'Proof'])
+        self.assertEqual(h.server.command.call_args.args, ('command-sequence', 'paste; layout Proof'))
