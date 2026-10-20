@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import uuid
 
 from PySide6.QtCore import Qt, QTimer, QThread, Signal, QUrl, QRect
 from PySide6.QtGui import QFont, QTextCursor, QTextDocument, QIcon, QDesktopServices, QSurface
@@ -51,6 +52,11 @@ QTabBar::tab:selected { color: #14697b; background: #fff; border-bottom: 3px sol
 QTabBar::tab:hover { color: #14697b; background: #e7f1f5; }
 QLabel[muted="true"] { color: #62788a; }
 QLabel#brand { font-size: 24px; font-weight: 700; color: #174e68; }
+QWidget#promptPanel { background: #f7f3ff; border: 1px solid #d6c5ed; border-radius: 10px; }
+QWidget#promptPanel QLabel { background: transparent; color: #5e3d89; border: none; }
+QLabel#promptHeading { font-weight: 700; font-size: 11pt; }
+QPlainTextEdit#taskPrompt { background: #fcfaff; border: 1px solid #bfa5dd; color: #30253f; }
+QPlainTextEdit#taskPrompt:focus { background: #ffffff; border: 2px solid #8b5ab8; padding: 7px; }
 QSplitter::handle { background: #ffffff; height: 5px; }
 QSplitter::handle:hover { background: #c6ece9; }
 QScrollBar:vertical { width: 10px; background: #ffffff; }
@@ -826,6 +832,13 @@ class MainWindow(QMainWindow):
             self.passage_buttons.append(action)
         self.update_passage_buttons()
         sl.addLayout(passage_row)
+        self.prompt_panel = QWidget()
+        self.prompt_panel.setObjectName('promptPanel')
+        prompt_layout = QVBoxLayout(self.prompt_panel)
+        prompt_layout.setContentsMargins(10, 8, 10, 10)
+        heading = QLabel(self.t('任务提示词', 'Task prompt'))
+        heading.setObjectName('promptHeading')
+        prompt_layout.addWidget(heading)
         template_row = QGridLayout()
         template_row.addWidget(QLabel(self.t("提示词模板", "Prompt template")), 0, 0)
         self.templates = QComboBox()
@@ -836,7 +849,8 @@ class MainWindow(QMainWindow):
         self.templates.currentIndexChanged.connect(self.load_template)
         template_row.addWidget(self.templates, 0, 1)
         template_row.setColumnStretch(1, 1)
-        template_row.addWidget(button(self.t("保存模板", "Save template"), self.save_template), 0, 2)
+        self.save_prompt_btn = button(self.t('保存自定义', 'Save custom'), self.save_template)
+        template_row.addWidget(self.save_prompt_btn, 0, 2)
         template_row.addWidget(button(self.t("另存模板", "Save as"), self.save_template_as), 0, 3)
         template_row.addWidget(QLabel(self.t("回答语言", "Reply language")), 1, 0)
         self.reply_lang = QComboBox()
@@ -844,14 +858,18 @@ class MainWindow(QMainWindow):
         self.reply_lang.addItems(["中文", "English", "Follow original language", "日本語", "Deutsch", "Français"])
         self.reply_lang.setEditText(self.config.get("reply_language", "中文"))
         template_row.addWidget(self.reply_lang, 1, 1, 1, 3)
-        sl.addLayout(template_row)
+        prompt_layout.addLayout(template_row)
         self.prompt = QPlainTextEdit()
+        self.prompt.setObjectName('taskPrompt')
         self.prompt.setAccessibleName(self.t("提示词", "Prompt"))
-        self.prompt.setMaximumHeight(115)
-        self.prompt.setMinimumHeight(65)
-        sl.addWidget(self.prompt)
+        self.prompt.setMaximumHeight(160)
+        self.prompt.setMinimumHeight(100)
+        prompt_layout.addWidget(self.prompt)
+        prompt_layout.addWidget(note(self.t('编辑内置模板会转为用户自定义；自定义内容自动保存。', 'Editing a built-in creates a custom template. Custom edits are saved automatically.')))
+        sl.addWidget(self.prompt_panel)
         self.loaded_template = -1
         self.load_template()
+        self.prompt.textChanged.connect(self.prompt_changed)
         sl.addWidget(note(self.t("前后文仅供理解，AI 只修改问询原文。LyX 菜单读取结构化选区并排除备注、脚注等；发送预览可核对全部内容。", "Context is reference only; AI revises the target. LyX menu imports structured body text, excluding notes/footnotes. Preview the entire request before sending.")))
         self.source_scroll = QScrollArea()
         self.source_scroll.setWidgetResizable(True)
@@ -909,7 +927,7 @@ class MainWindow(QMainWindow):
         self.output_scroll.setWidget(output)
         panes.addWidget(self.output_scroll)
         ui = self.config.get('ui_state', {}).get('main', {})
-        panes.setSizes(ui.get('splitter', [360, 400]))
+        panes.setSizes(ui.get('splitter', [440, 330]))
         self.output_tabs.setCurrentIndex(min(ui.get('output_tab', 0), self.output_tabs.count()-1))
         actions = self.action_grid = QGridLayout()
         self.send_btn = button(self.t("发送问询", "Send request"), self.send, True)
@@ -935,7 +953,7 @@ class MainWindow(QMainWindow):
         outer.addLayout(footer)
         self.follow_btn.setEnabled(bool(self.history))
         self._building = False
-        for signal in (self.reply_lang.currentTextChanged, self.prompt.textChanged, self.output_tabs.currentChanged, self.panes.splitterMoved):
+        for signal in (self.reply_lang.currentTextChanged, self.output_tabs.currentChanged, self.panes.splitterMoved):
             signal.connect(self.schedule_preferences)
         self.replacement.textChanged.connect(self.schedule_preferences)
         self.adapt_layout()
@@ -1006,8 +1024,6 @@ class MainWindow(QMainWindow):
     def capture_preferences(self):
         self.config.update(reply_language=self.reply_lang.currentText(), template_index=self.templates.currentIndex(),
                            auto_context=self.auto_context.isChecked(), context_radius=self.context_radius.currentData(), active=self.profile.currentData())
-        if self.loaded_template >= 0:
-            self.config['templates'][self.loaded_template]['prompt'] = self.prompt.toPlainText()
         self.config.setdefault('ui_state', {})['main'] = dict(window_state(self), splitter=self.panes.sizes(), output_tab=self.output_tabs.currentIndex())
 
     def save_preferences(self):
@@ -1077,7 +1093,6 @@ class MainWindow(QMainWindow):
         self.config['context_radius'] = self.context_radius.currentData()
         self.config["language"] = self.language.currentData()
         template_index = self.templates.currentIndex()
-        self.config["templates"][template_index]["prompt"] = self.prompt.toPlainText()
         self.config["template_index"] = template_index
         self.config["reply_language"] = self.reply_lang.currentText()
         if not self.persist():
@@ -1098,14 +1113,35 @@ class MainWindow(QMainWindow):
     def load_template(self):
         index = self.templates.currentIndex()
         if index >= 0:
-            if getattr(self, 'loaded_template', -1) >= 0:
-                self.config['templates'][self.loaded_template]['prompt'] = self.prompt.toPlainText()
             self.loaded_template = index
+            self.prompt.blockSignals(True)
             self.prompt.setPlainText(self.config["templates"][index]["prompt"])
+            self.prompt.blockSignals(False)
+            self.save_prompt_btn.setEnabled(not self.config['templates'][index].get('id', '').startswith('builtin.'))
             self.schedule_preferences()
 
+    def prompt_changed(self):
+        index = self.templates.currentIndex()
+        if index < 0:
+            return
+        template = self.config['templates'][index]
+        if template.get('id', '').startswith('builtin.'):
+            template = dict(template, id='custom.' + uuid.uuid4().hex,
+                            name=self.t('用户自定义 · ', 'Custom · ') + template['name'])
+            self.config['templates'].append(template)
+            self.templates.blockSignals(True)
+            self.templates.addItem(template['name'])
+            self.templates.setCurrentIndex(self.templates.count() - 1)
+            self.templates.blockSignals(False)
+            self.loaded_template = self.templates.currentIndex()
+        template['prompt'] = self.prompt.toPlainText()
+        self.save_prompt_btn.setEnabled(True)
+        self.schedule_preferences()
+
     def save_template(self):
-        self.config["templates"][self.templates.currentIndex()]["prompt"] = self.prompt.toPlainText()
+        if self.config['templates'][self.templates.currentIndex()].get('id', '').startswith('builtin.'):
+            return
+        self.prompt_changed()
         self.config["template_index"] = self.templates.currentIndex()
         self.config["reply_language"] = self.reply_lang.currentText()
         if self.persist():
@@ -1114,7 +1150,7 @@ class MainWindow(QMainWindow):
     def save_template_as(self):
         name, ok = QInputDialog.getText(self, self.t("另存模板", "Save template as"), self.t("模板名称", "Template name"))
         if ok and name.strip():
-            self.config["templates"].append(dict(name=name.strip(), prompt=self.prompt.toPlainText()))
+            self.config["templates"].append(dict(id='custom.' + uuid.uuid4().hex, name=name.strip(), prompt=self.prompt.toPlainText()))
             if self.persist():
                 self.templates.addItem(name.strip())
                 self.templates.setCurrentIndex(self.templates.count() - 1)
@@ -1126,9 +1162,13 @@ class MainWindow(QMainWindow):
             raise ValueError(self.t("请先选择或粘贴文字。", "Select or paste text first."))
         if not self.prompt.toPlainText().strip():
             raise ValueError(self.t("请填写提示词。", "Enter a prompt."))
+        if self.lyx_payload and self.lyx_payload.get('native') and selection == self.lyx_payload.get('query_text', self.lyx_payload.get('text')):
+            from .replacement import structured_selection
+            selection = structured_selection(self.lyx_payload['native']) or selection
         selected_with_context = compose_context(selection, self.before.toPlainText(), self.after.toPlainText())
         user = render_prompt(self.prompt.toPlainText(), selected_with_context, self.reply_lang.currentText())
         user += '\n\n如需给出可直接替换的修改，请将且仅将目标正文放在 [REVISED] 与 [/REVISED] 之间，解释放在标记外。公式使用 $…$ 或 \\[ … \\]；不要重复前后文。\nFor an applicable revision, put ONLY the revised target between [REVISED] and [/REVISED]; keep explanations outside. Use $…$ or \\[ … \\] for equations.'
+        user += '\n保留目标中的 LaTeX 环境（如 theorem、proof）和源码命令；混合布局的修改稿使用明确的 LaTeX 环境边界，不要将环境变成普通文字。\nPreserve target LaTeX environments (such as theorem/proof) and source commands. Use explicit LaTeX boundaries for mixed layouts.'
         return ([{"role": "system", "content": p["system"]}] if p.get("system") else []) + [{"role": "user", "content": user}]
 
     def preview(self):
@@ -1327,6 +1367,8 @@ class MainWindow(QMainWindow):
             self.display_timer.stop()
             self.display_pending = [[], []]
             self.selection.setPlainText(message["text"])
+            if self.lyx_payload:
+                self.lyx_payload['query_text'] = self.selection.toPlainText()
             self.before.clear()
             self.after.clear()
             self.history = []
@@ -1429,4 +1471,6 @@ class MainWindow(QMainWindow):
         def applied(result):
             action = self.t('已插入当前光标位置。', 'Inserted at the current caret.') if result['mode'] == 'insert' else self.t('已替换当前选区。', 'Replaced the current selection.')
             self.status.setText(action + self.t(' 可在 LyX 一次撤销（macOS：⌘Z；Windows：Ctrl+Z），也可选择其他位置继续应用。', ' Undo once in LyX (macOS: ⌘Z; Windows: Ctrl+Z), or select another position to apply again.'))
+            if result.get('layout_fallback'):
+                self.status.setText(action + self.t(' 修改稿为无结构纯文本且段落数改变，已按正文布局应用；要保留定理/证明边界，请使用 LaTeX 环境。可一次撤销。', ' Unstructured text changed the paragraph count, so body layouts were used. Use LaTeX environments to retain theorem/proof boundaries. Undo once to restore.'))
         self.run_bridge(lambda: apply_replacement(payload, text), applied)

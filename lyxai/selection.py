@@ -30,7 +30,7 @@ def reference_text(kind, params):
     return '\\' + command + options + '{' + key + '}'
 
 
-def extract_body(source: str, include_ert=False) -> BodySelection:
+def extract_body(source: str, include_ert=False, allow_empty=False) -> BodySelection:
     """Read LyX paragraphs and a small, explicit set of inline insets.
 
     Unknown block insets are omitted, rather than guessed to be body prose.
@@ -129,7 +129,7 @@ def extract_body(source: str, include_ert=False) -> BodySelection:
         raise ValueError("Incomplete LyX selection / LyX 选区结构不完整")
     text = "".join(output)
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
-    if not text:
+    if not text and not allow_empty:
         raise ValueError("No body text in selection / 选区中没有正文，备注和脚注不会加入")
     return BodySelection(text, excluded)
 

@@ -197,7 +197,7 @@ def load_context(payload, stem=None, radius=1800, include_context=True):
 
 def apply_replacement(payload, replacement, stem=None):
     from .integration import capture_lyx_payload
-    from .replacement import replacement_fragment, source_destination, source_fragment, latex_input
+    from .replacement import replacement_fragment, source_destination, source_fragment, latex_input, native_paragraphs, body_insets, paragraph_boundaries
     with LyXServer(stem or pipe_name(payload.get('lyx_user_dir'))) as server:
         if not payload.get('filename') or server.command('server-get-filename') != payload['filename']:
             raise ValueError('当前 LyX 文档已变化，请回原文或从新文档重新问询。 / LyX document changed; return to the original document or ask from the new one.')
@@ -221,20 +221,51 @@ def apply_replacement(payload, replacement, stem=None):
             mode = 'replace'
         if r'\change_' in native_body(template):
             raise ValueError('请先接受或拒绝修订，再应用改写。 / Accept or reject tracked changes before applying.')
-        source = 'interior' if layout == 'Plain Layout' else source_destination(template)
+        source = source_destination(template)
+        # The endpoint caret may be inside ERT while the selection spans body
+        # layouts. Only infer an interior for a single unwrapped paragraph.
+        target_paragraphs = native_paragraphs(template)
+        if not source and layout == 'Plain Layout' and len(target_paragraphs) == 1 and target_paragraphs[0].layout == 'Standard' and not list(body_insets(target_paragraphs[0].body)):
+            source = 'interior'
         imported = None
+        fallback = False
+        restore_layout = None
         if source:
             fragment = source_fragment(template, replacement, source)
         else:
             # Latex structures must be parsed with the live document's modules
             # and preamble; the normal serializer remains lossless for formulas.
-            imported = latex_input(replacement, server.snapshot()) if re.search(r'\\(?:begin\{|textbf|textit|texttt|emph|underline|section|subsection|paragraph|label|footnote)|```(?:latex|tex)', replacement) else None
+            imported = latex_input(replacement, server.snapshot)
             fragment = None if imported is not None else replacement_fragment(template, replacement)
+            if fragment:
+                targets = paragraph_boundaries(target_paragraphs)[1]
+                rewritten = paragraph_boundaries(native_paragraphs(fragment))[1]
+                fallback = len({(p.layout, p.depth) for p in targets}) > 1 and len(targets) != len(rewritten)
+                trailing = paragraph_boundaries(target_paragraphs)[2]
+                if trailing:
+                    restore_layout = trailing[-1].layout
+                elif fallback and len(rewritten) == 1:
+                    restore_layout = 'Standard'
+        if restore_layout and any(c in restore_layout for c in ';\r\n\\\0'):
+            raise ValueError('Invalid LyX boundary layout')
+        if imported is not None and paragraph_boundaries(target_paragraphs)[2]:
+            tail_layout = target_paragraphs[-1].layout
+            if layout != tail_layout or target_paragraphs[0].layout == tail_layout:
+                raise ValueError('选区停在段落空边界且方向不明确，请完整选中末尾段落后应用；可保留多个布局。 / Select through the last paragraph text to disambiguate this boundary; mixed layouts are supported.')
         set_native_clipboard(fragment, imported if imported is not None else replacement, notify_pid=payload['owner_pid'])
         if server.command('server-get-filename') != payload['filename']:
             raise ValueError('LyX document changed; nothing replaced')
-        server.command('paste', 'latex') if imported is not None else server.command('paste')
-    return {'applied': True, 'mode': mode}
+        if restore_layout:
+            # Deleting a cross-layout range merges its unselected suffix into
+            # the first layout. Restore its role inside the same undo group.
+            server.command('command-sequence', 'paste; layout ' + restore_layout)
+        elif imported is not None and paragraph_boundaries(target_paragraphs)[2]:
+            # Exclude the selected boundary newline before LaTeX import. This
+            # keeps the unselected following paragraph out of LyX's delete/merge.
+            server.command('command-sequence', 'char-backward-select; paste latex')
+        else:
+            server.command('paste', 'latex') if imported is not None else server.command('paste')
+    return {'applied': True, 'mode': mode, 'layout_fallback': fallback}
 
 
 def notify_lyx_clipboard(pid):

@@ -56,13 +56,26 @@ def builtin_templates():
 
 
 def add_builtin_templates(config):
-    """Append new presets on upgrade; preserve edited/custom templates and order."""
+    """Restore immutable presets, keeping legacy edits as custom templates."""
     templates = config.setdefault('templates', [])
-    ids = {item.get('id') for item in templates}
-    names = {item.get('name') for item in templates}
-    for template in builtin_templates():
-        if template['id'] not in ids and template['name'] not in names:
-            templates.append(template)
+    selected = config.get('template_index', 0)
+    presets = builtin_templates()
+    by_id = {t['id']: t for t in presets}
+    by_name = {t['name']: t for t in presets}
+    seen = set()
+    for index, item in enumerate(list(templates)):
+        preset = by_id.get(item.get('id')) or (by_name.get(item.get('name')) if not item.get('id') else None)
+        if not preset:
+            item.setdefault('id', 'custom.' + uuid.uuid4().hex)
+            continue
+        if 'prompt' in item and item['prompt'] != preset['prompt']:
+            custom = dict(item, id='custom.' + uuid.uuid4().hex, name='用户自定义 / Custom · ' + item.get('name', preset['name']))
+            templates.append(custom)
+            if index == selected:
+                config['template_index'] = len(templates) - 1
+        templates[index] = dict(preset)
+        seen.add(preset['id'])
+    templates.extend(dict(t) for t in presets if t['id'] not in seen)
     return config
 
 
@@ -83,7 +96,7 @@ def new_profile(provider="OpenAI") -> dict:
 
 def default_config() -> dict:
     p = new_profile()
-    return dict(version=1, language="zh", profiles=[p], active=p["id"], reply_language="中文",
+    return dict(version=2, language="zh", profiles=[p], active=p["id"], reply_language="中文",
                 templates=builtin_templates(), template_index=0, auto_context=True,
                 context_radius=1800, ui_state={})
 
@@ -156,8 +169,9 @@ class Store:
             return default_config()
         raw = self.path.read_bytes()
         obj = json.loads(raw)
-        if obj.get("version") != 1 or not isinstance(obj.get("profiles"), list):
+        if obj.get("version") not in (1, 2) or not isinstance(obj.get("profiles"), list):
             raise ValueError("Unsupported configuration / 配置格式不支持；原文件已保留")
+        obj['version'] = 2
         for p in obj["profiles"]:
             account = p.pop('credentials_keychain', None)
             if account:
@@ -189,7 +203,15 @@ class Store:
                 if current != self.revision:
                     raise ValueError("Configuration changed in another window. Reopen this window. / 配置已在其他窗口改变，请重新打开窗口。")
                 saved = copy.deepcopy(obj)
-                old = json.loads(self.path.read_bytes()) if self.path.exists() else {}
+                saved['version'] = 2
+                preset_ids = {t['id'] for t in builtin_templates()}
+                # Preset contents come from code; only custom prompts persist.
+                saved['templates'] = [dict(id=t['id']) if t.get('id') in preset_ids else t for t in saved.get('templates', [])]
+                old_raw = self.path.read_bytes() if self.path.exists() else b'{}'
+                old = json.loads(old_raw)
+                backup = self.folder / 'config.before-template-migration.json'
+                backup_data = json.loads(backup.read_bytes()) if backup.exists() else old if old.get('version') == 1 else {}
+                retained_accounts = {p.get('credentials_keychain') for p in backup_data.get('profiles', [])}
                 for p in saved["profiles"]:
                     secret = {k: p.pop(k, "") for k in ("api_key", "url", "proxy")}
                     secret["headers"] = p.pop("headers", {})
@@ -202,6 +224,8 @@ class Store:
                     else:
                         p["credentials_dpapi"] = base64.b64encode(_dpapi(json.dumps(secret).encode())).decode()
                 raw = json.dumps(saved, ensure_ascii=False, indent=2, allow_nan=False).encode("utf-8")
+                if old.get('version') == 1 and not backup.exists():
+                    atomic_write(backup, old_raw)
                 atomic_write(self.path, raw)
                 self.revision = hashlib.sha256(raw).hexdigest()
             except Exception:
@@ -215,7 +239,7 @@ class Store:
                 else:
                     fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
             for p in old.get('profiles', []):
-                if p.get('credentials_keychain'):
+                if p.get('credentials_keychain') and p['credentials_keychain'] not in retained_accounts:
                     try:
                         keychain(p['credentials_keychain'], delete=True)
                     except RuntimeError:

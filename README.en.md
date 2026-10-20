@@ -21,10 +21,10 @@ Select a passage in the LyX document body and open the assistant from the contex
 | **Native equation writeback** | Inline, displayed and multiline align/aligned equations become editable LyX math objects, retaining supported numbering and label structures. |
 | **Markdown and math preview** | Read headings, lists, tables and equations in an offline preview before using the revision. |
 | **Your models and relay services** | Separate profiles for endpoints, protocols, keys, models, generation settings, reasoning, proxies and timeouts. |
-| **Persistent preferences** | Reply language, selected and edited prompts, model, context radius and window layout are saved automatically, including a 1200-character context option. |
+| **Persistent preferences** | Reply language, template selection, custom prompts, model, context radius and window layout are saved automatically. Built-in prompts stay unchanged. |
 | **Local conversation history** | Read AI replies separately for each turn, with questions and reasoning in their own tabs. Search, reload and continue; partial replies survive failed or cancelled requests. |
 | **Comfortable on small screens** | Screen-aware sizing, scrollable panels and a one-line status bar. Preview switches retain the window and page position. |
-| **Prompts for writing tasks** | Edit or save templates for academic editing, proofreading, concision, logical flow, equations and translation; continue with follow-up questions. |
+| **A prominent prompt editor** | A soft purple panel highlights the task prompt. Editing a built-in creates a custom template; subsequent edits persist, with named copies available. |
 | **Reviewable, undoable changes** | Inspect the outgoing request, choose the current selection or caret as the destination, and undo the application in LyX with one action. |
 
 ## Connect your own models
@@ -38,6 +38,8 @@ Configuration presets cover OpenAI, Claude, DeepSeek, Kimi, Grok, GLM / BigModel
 Keep official endpoints and relay configurations in separate profiles. Configure generation parameters, reasoning mode and effort, output limits, custom headers and advanced JSON. Available parameters and model access depend on the service you connect to.
 
 ## Revise prose and equations together
+
+Apply multiple theorem/proof environments, body paragraphs and embedded LaTeX together. Plain-text paragraphs retain their individual layouts when they correspond to the original paragraphs; explicit LaTeX environments support added or removed paragraphs. Requests include the target's environment boundaries and source commands automatically.
 
 Click **Target passage / Before / After** to inspect or edit text in a popup. Save commits changes for the next request; Cancel leaves the text unchanged. Automatic context collection still runs without opening these dialogs.
 

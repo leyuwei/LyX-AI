@@ -1,0 +1,46 @@
+#LyX 2.5 created this file. For more info see https://www.lyx.org/
+\lyxformat 643
+\begin_document
+\begin_header
+\textclass article
+\begin_modules
+theorems-ams
+\end_modules
+\language english
+\inputencoding utf8
+\end_header
+\begin_body
+\begin_layout Standard
+Before mixed selection.
+\end_layout
+\begin_layout Theorem
+First theorem 
+\begin_inset Formula $x=1$
+\end_inset
+.
+\end_layout
+\begin_layout Proof
+First proof.
+\end_layout
+\begin_layout Standard
+Text with 
+\begin_inset ERT
+status open
+\begin_layout Plain Layout
+\backslash
+fbox{embedded source}
+\end_layout
+\end_inset
+ after source.
+\end_layout
+\begin_layout Theorem
+Second theorem.
+\end_layout
+\begin_layout Proof
+Second proof.
+\end_layout
+\begin_layout Standard
+After mixed selection.
+\end_layout
+\end_body
+\end_document

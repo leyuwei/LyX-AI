@@ -62,7 +62,7 @@ if '--readme' in sys.argv:
             store.save(config)
             target = '系统状态由上一时刻确定，观测由当前状态决定。' if lang == 'zh' else 'The next system state depends on the current state, and observations depend on the state.'
             window = MainWindow(target, store)
-            window.resize(1160, 930)
+            window.resize(1160, 1020)
             window.before.setPlainText('考虑一个离散时间系统，记状态为 x，观测为 y。' if lang == 'zh' else 'Consider a discrete-time system with state x and observation y.')
             window.after.setPlainText('随后讨论状态递推关系及观测函数的性质。' if lang == 'zh' else 'We next discuss the state transition and observation functions.')
             equation = r'\begin{align}x_{t+1}&=f(x_t),\nonumber\\y_t&=g(x_t).\label{eq:state}\end{align}'
@@ -74,7 +74,7 @@ if '--readme' in sys.argv:
             window.output_tabs.setCurrentWidget(window.rich_preview)
             window.rich_preview.set_text(answer)
             window.show()
-            window.panes.setSizes([360, 410])
+            window.panes.setSizes([440, 330])
             window.rich_preview.timer.stop()
             window.rich_preview.render()
             loop = QEventLoop()

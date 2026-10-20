@@ -48,6 +48,7 @@ class PersistenceTests(unittest.TestCase):
         w.prompt.setPlainText('Edited template A {selection}')
         w.templates.setCurrentIndex(3)
         w.prompt.setPlainText('Edited template B {selection}')
+        custom_index = w.templates.currentIndex()
         w.output_tabs.setCurrentIndex(2)
         w.resize(720, 480)
         w.save_preferences()  # Same callback as the debounce timer; no Save button.
@@ -58,9 +59,10 @@ class PersistenceTests(unittest.TestCase):
         self.assertFalse(saved['auto_context'])
         w.close()
         reopened = self.window()
-        self.assertEqual(reopened.templates.currentIndex(), 3)
+        self.assertEqual(reopened.templates.currentIndex(), custom_index)
         self.assertEqual(reopened.prompt.toPlainText(), 'Edited template B {selection}')
-        self.assertEqual(reopened.config['templates'][0]['prompt'], 'Edited template A {selection}')
+        self.assertNotEqual(reopened.config['templates'][0]['prompt'], 'Edited template A {selection}')
+        self.assertEqual(reopened.config['templates'][10]['prompt'], 'Edited template A {selection}')
         self.assertEqual(reopened.reply_lang.currentText(), 'My custom reply language')
         self.assertEqual(reopened.context_radius.currentData(), 1200)
         self.assertEqual(reopened.profile.currentData(), p['id'])
@@ -76,11 +78,69 @@ class PersistenceTests(unittest.TestCase):
         self.assertEqual(w.context_radius.currentData(), 1200)
         w.templates.setCurrentIndex(5)
         w.prompt.setPlainText('Last unsaved edit {selection}')
+        custom_index = w.templates.currentIndex()
         w.close()
         reopened = self.window()
         self.assertEqual(reopened.lang, 'en')
-        self.assertEqual(reopened.templates.currentIndex(), 5)
+        self.assertEqual(reopened.templates.currentIndex(), custom_index)
         self.assertEqual(reopened.prompt.toPlainText(), 'Last unsaved edit {selection}')
+
+    def test_editing_a_builtin_forks_once_and_never_overwrites_presets(self):
+        w = self.window()
+        original = [dict(t) for t in w.config['templates']]
+        self.assertFalse(w.save_prompt_btn.isEnabled())
+        w.prompt.setPlainText('My draft {selection}')
+        custom_index = w.templates.currentIndex()
+        self.assertEqual(custom_index, len(original))
+        identity = w.config['templates'][custom_index]['id']
+        self.assertTrue(identity.startswith('custom.'))
+        w.prompt.insertPlainText(' further edit')
+        self.assertEqual(w.templates.currentIndex(), custom_index)
+        self.assertEqual(len(w.config['templates']), len(original) + 1)
+        self.assertEqual(w.config['templates'][custom_index]['id'], identity)
+        w.save_template()
+        draft = w.prompt.toPlainText()
+        w.templates.setCurrentIndex(0)
+        self.assertEqual(w.prompt.toPlainText(), original[0]['prompt'])
+        w.save_template()
+        w.save_preferences()
+        self.assertEqual(w.config['templates'][:len(original)], original)
+        w.templates.setCurrentIndex(custom_index)
+        self.assertEqual(w.prompt.toPlainText(), draft)
+        w.close()
+        reopened = self.window()
+        self.assertEqual(reopened.prompt.toPlainText(), draft)
+        self.assertEqual(reopened.config['templates'][:len(original)], original)
+
+    def test_save_as_creates_named_custom_without_changing_builtin(self):
+        w = self.window()
+        original = dict(w.config['templates'][0])
+        with patch('lyxai.ui.QInputDialog.getText', return_value=('My writing task', True)):
+            w.save_template_as()
+        self.assertEqual(w.templates.currentText(), 'My writing task')
+        self.assertTrue(w.config['templates'][w.templates.currentIndex()]['id'].startswith('custom.'))
+        w.prompt.setPlainText('Named custom edit {selection}')
+        w.close()
+        reopened = self.window()
+        self.assertEqual(reopened.templates.currentText(), 'My writing task')
+        self.assertEqual(reopened.prompt.toPlainText(), 'Named custom edit {selection}')
+        self.assertEqual(reopened.config['templates'][0], original)
+
+    def test_ai_request_includes_native_mixed_layouts_but_keeps_manual_target_edits(self):
+        from test_mixed_layouts import mixed, ERT
+        from lyxai.selection import extract_body
+        original = mixed(('Theorem', 'Original theorem.'), ('Proof', 'Original proof.'), ('Standard', ERT))
+        target = extract_body(original, include_ert=True).text
+        w = self.window(target)
+        w.lyx_payload = dict(text=target, native=original)
+        message = w.initial_messages()[-1]['content']
+        self.assertIn(r'\begin{theorem}', message)
+        self.assertIn(r'\begin{proof}', message)
+        self.assertIn(r'\fbox{source}', message)
+        w.selection.setPlainText('User edited target')
+        message = w.initial_messages()[-1]['content']
+        self.assertIn('User edited target', message)
+        self.assertNotIn('Original theorem.', message)
 
     def test_preference_changes_reach_disk_automatically_without_closing(self):
         w = self.window()

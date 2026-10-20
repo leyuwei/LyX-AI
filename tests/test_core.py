@@ -192,13 +192,39 @@ class InstallationTests(unittest.TestCase):
             cfg['language'] = 'en'
             store.save(cfg)
             upgraded = store.load()
-            self.assertEqual(len(upgraded['templates']), 11)
-            self.assertEqual(upgraded['templates'][0]['prompt'], 'My edits {selection}')
+            self.assertEqual(len(upgraded['templates']), 12)
+            self.assertEqual(upgraded['templates'][0]['prompt'], default_config()['templates'][0]['prompt'])
+            self.assertEqual(upgraded['templates'][3]['prompt'], 'My edits {selection}')
+            self.assertTrue(upgraded['templates'][3]['id'].startswith('custom.'))
             self.assertEqual(upgraded['templates'][2]['name'], 'My prompt')
             self.assertEqual(upgraded['template_index'], 2)
             self.assertEqual(upgraded['language'], 'en')
             store.save(upgraded)
-            self.assertEqual(len(Store(Path(tmp)).load()['templates']), 11)
+            self.assertEqual(len(Store(Path(tmp)).load()['templates']), 12)
+
+    def test_upgrade_keeps_selected_edited_builtin_as_custom_and_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(Path(tmp))
+            cfg = store.load()
+            store.save(cfg)
+            legacy = json.loads(store.path.read_text(encoding='utf-8'))
+            legacy['version'] = 1
+            legacy['templates'][0].update(name=cfg['templates'][0]['name'], prompt='Legacy edit {selection}')
+            store.path.write_text(json.dumps(legacy), encoding='utf-8')
+            upgraded = store.load()
+            custom = upgraded['templates'][upgraded['template_index']]
+            self.assertEqual(custom['prompt'], 'Legacy edit {selection}')
+            self.assertTrue(custom['id'].startswith('custom.'))
+            self.assertEqual(upgraded['templates'][0], default_config()['templates'][0])
+            store.save(upgraded)
+            raw = json.loads(store.path.read_text(encoding='utf-8'))
+            self.assertNotIn('prompt', raw['templates'][0])
+            self.assertEqual(raw['version'], 2)
+            backup = json.loads((Path(tmp) / 'config.before-template-migration.json').read_text(encoding='utf-8'))
+            self.assertEqual(backup, legacy)
+            reopened = Store(Path(tmp)).load()
+            self.assertEqual(reopened['templates'], upgraded['templates'])
+            self.assertEqual(reopened['template_index'], upgraded['template_index'])
 
     @patch('lyxai.integration.sys.platform', 'win32')
     def test_all_three_bootstraps_decode_to_exact_arguments(self):

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import re
 
 from markdown_it import MarkdownIt
-from .selection import reference_text
+from .selection import extract_body, reference_text
 
 
 ENVIRONMENTS = r'equation\*?|displaymath|align\*?|aligned|alignat\*?|alignedat|flalign\*?|gather\*?|gathered|multline\*?|eqnarray\*?|split'
@@ -22,14 +22,16 @@ UNSAFE_TEX = re.compile(r'\\(?:input|include|includegraphics|write\d*|openout|op
 
 def latex_input(text, document):
     """Use LyX's own LaTeX importer for structure and text formatting commands."""
-    source = re.fullmatch(r'\s*```(?:latex|tex)\s*\n([\s\S]*?)\n```\s*', text)
-    text = source[1] if source else text
+    text, fences = re.subn(r'(?m)^[ \t]*```(?:latex|tex)[ \t]*\n([\s\S]*?)^[ \t]*```[ \t]*$', r'\1', text)
+    source = bool(fences)
+    if source:
+        text = text.strip()
     if not source and re.search(r'(?m)^\s*(?:```|~~~)', text):
         return None
     # Math and references already have a lossless native serializer. Other TeX
     # commands require the native importer, not escaped backslashes in prose.
     outside_math = ''.join(part for part in math_parts(text) if isinstance(part, str) and not part.startswith(('`', '~~~')))
-    if not source and not re.search(r'(?<!\\)\\(?:begin\{|(?:textbf|textit|texttt|emph|underline|section\*?|subsection\*?|subsubsection\*?|paragraph\*?|label|footnote)\s*\{)', outside_math):
+    if not source and not re.search(r'(?<!\\)\\(?:[A-Za-z]+|[\\#$%&_{}~^ ,;:!])', REFERENCE.sub('', outside_math)):
         return None
     validate_tex(text)
     stack = []
@@ -42,6 +44,7 @@ def latex_input(text, document):
         raise ValueError('LaTeX 环境不完整。 / Incomplete LaTeX environment.')
     environments = re.findall(r'\\begin\{([\w*]+)\}', outside_math)
     if any(env.rstrip('*') in set(THEOREMS) | set(THEOREMS.values()) for env in environments):
+        document = document() if callable(document) else document
         modules = re.search(r'\\begin_modules\n([\s\S]*?)\\end_modules', document)
         has_theorems = modules and 'theorems-' in modules[1]
         known_layout = any('\\begin_layout ' + name.title() in document for name in THEOREMS)
@@ -70,7 +73,7 @@ def source_destination(native):
     layouts = re.findall(r'\\begin_layout ([^\n]+)', outer)
     if layouts and set(layouts) == {'Plain Layout'}:
         return 'interior'
-    if len(spans) == 1 and spans[0][2].startswith('\\begin_inset ERT\n') and not re.sub(r'(?m)^\\[^\n]*|\s+', '', outer):
+    if len(layouts) == 1 and len(spans) == 1 and spans[0][2].startswith('\\begin_inset ERT\n') and not re.sub(r'(?m)^\\[^\n]*|\s+', '', outer):
         return 'object'
     return None
 
@@ -103,6 +106,111 @@ def body_insets(body):
                 yield start, match.end(), body[start:match.end()]
     if depth:
         raise ValueError('Incomplete LyX inset')
+
+
+@dataclass
+class NativeParagraph:
+    layout: str
+    body: str
+    depth: int = 0
+
+
+def native_paragraphs(native):
+    """Read outer paragraph boundaries without confusing layouts inside ERT."""
+    body = native.split(r'\begin_body', 1)[1].split(r'\end_body', 1)[0]
+    list(body_insets(body))  # Validate complete inset nesting before using it.
+    paragraphs, lines = [], []
+    inset_depth = depth = 0
+    layout = None
+    for line in body.splitlines(keepends=True):
+        token = line.strip()
+        if token.startswith(r'\begin_inset '):
+            inset_depth += 1
+        elif token == r'\end_inset':
+            inset_depth -= 1
+            lines.append(line)
+            continue
+        if inset_depth:
+            lines.append(line)
+        elif token.startswith(r'\begin_layout '):
+            if layout is not None:
+                raise ValueError('Unbalanced LyX paragraph')
+            layout, lines = token[len(r'\begin_layout '):], []
+        elif token == r'\end_layout':
+            if layout is None:
+                raise ValueError('Unbalanced LyX paragraph')
+            paragraphs.append(NativeParagraph(layout, ''.join(lines), depth))
+            layout, lines = None, []
+        elif token in (r'\begin_deeper', r'\end_deeper'):
+            depth += 1 if token == r'\begin_deeper' else -1
+            if not 0 <= depth <= 128:
+                raise ValueError('Invalid LyX paragraph depth')
+        elif layout is not None:
+            lines.append(line)
+    if layout is not None or depth:
+        raise ValueError('Incomplete LyX paragraph structure')
+    return paragraphs
+
+
+def paragraph_boundaries(paragraphs):
+    """Empty edge paragraphs carry unselected prefix/suffix layout on paste."""
+    def empty(p):
+        return r'\begin_inset' not in p.body and not re.sub(r'(?m)^\\[^\n]*|\s+', '', p.body)
+    start, end = 0, len(paragraphs)
+    while end - start > 1 and empty(paragraphs[start]):
+        start += 1
+    while end - start > 1 and empty(paragraphs[end - 1]):
+        end -= 1
+    return paragraphs[:start], paragraphs[start:end], paragraphs[end:]
+
+
+def structured_selection(native):
+    """Give AI explicit theorem/proof boundaries and real embedded ERT commands."""
+    _, paragraphs, _ = paragraph_boundaries(native_paragraphs(native))
+    if len({p.layout for p in paragraphs}) < 2 and not any(r'\begin_inset ERT' in p.body for p in paragraphs):
+        return None
+    header = '\\begin_body\n'
+    def plain_body(body):
+        return extract_body(header + '\\begin_layout Standard\n' + body + '\n\\end_layout\n\\end_body\n', include_ert=True, allow_empty=True).text
+    result, active = [], None
+    for paragraph in paragraphs:
+        body, sources, title = paragraph.body, [], ''
+        for start, end, raw in reversed(list(body_insets(body))):
+            if raw.startswith('\\begin_inset ERT\n'):
+                sources.append(plain_body(raw))
+            elif raw.startswith('\\begin_inset CommandInset label\n'):
+                name = re.search(r'(?m)^name "([^"\n]+)"$', raw)
+                sources.append('\\label{' + name[1] + '}' if name else '')
+            elif raw.startswith('\\begin_inset Argument 1\n'):
+                inside = raw[raw.index(r'\begin_layout '):raw.rindex(r'\end_inset')]
+                title = extract_body(header + inside + '\n\\end_body\n', include_ert=True, allow_empty=True).text
+                body = body[:start] + body[end:]
+                continue
+            else:
+                continue
+            marker = f'LYXAISOURCEPLACEHOLDER{len(sources)-1}END'
+            body = body[:start] + marker + body[end:]
+        text = plain_body(body)
+        def protect_reference(match):
+            sources.append(match[0])
+            return f'LYXAISOURCEPLACEHOLDER{len(sources)-1}END'
+        text = REFERENCE.sub(protect_reference, text)
+        # Escape prose for LaTeX while retaining formula and ERT provenance.
+        text = ''.join(formula_source(p) if isinstance(p, Math) else re.sub(r'([&%#_{}])', r'\\\1', p) for p in math_parts(text))
+        for i, source in enumerate(sources):
+            text = text.replace(f'LYXAISOURCEPLACEHOLDER{i}END', source)
+        environment = paragraph.layout.lower() if paragraph.layout.lower() in THEOREMS else None
+        if environment != active or title:
+            if active:
+                result.append('\\end{' + active + '}')
+            if environment:
+                result.append('\\begin{' + environment + '}' + ('[{' + title + '}]' if title else ''))
+            active = environment
+        heading = {'Section': 'section', 'Subsection': 'subsection', 'Subsubsection': 'subsubsection', 'Paragraph': 'paragraph'}.get(paragraph.layout)
+        result.append('\\' + heading + '{' + text + '}' if heading else text)
+    if active:
+        result.append('\\end{' + active + '}')
+    return '\n\n'.join(result)
 
 
 def reference_inset(match):
@@ -187,18 +295,9 @@ def replacement_fragment(original, replacement):
         raise ValueError('请先接受或拒绝修订，再应用改写。 / Accept or reject tracked changes before applying.')
     if re.search(r'\\begin_layout (?:Plain Layout|Code|LyX-Code|Verbatim)', body):
         raise ValueError('请在主正文中选取完整文本和公式，不能替换嵌套对象内部。 / Select main body prose, not an inset interior.')
-    layouts = re.findall(r'\\begin_layout ([^\n]+)', body)
-    if not layouts or len(set(layouts)) != 1 or r'\begin_deeper' in body:
-        raise ValueError('目标跨越不同布局，请分段应用。 / Apply separately to each paragraph layout.')
-    initial_style = []
-    first = body.split('\\begin_layout ' + layouts[0], 1)[1].split('\n', 1)[1]
-    for line in first.splitlines():
-        if not line.strip():
-            continue
-        if re.fullmatch(r'\\(?:lang|series|shape|family|size|color|emph) [\w-]+', line):
-            initial_style.append(line)
-        elif not line.startswith('\\') or line.startswith('\\begin_inset'):
-            break
+    leading, originals, trailing = paragraph_boundaries(native_paragraphs(original))
+    if not originals:
+        raise ValueError('No LyX paragraphs in destination')
     objects = []
     protected = []
     if 'LYXAIMATHPLACEHOLDER' in replacement:
@@ -245,13 +344,34 @@ def replacement_fragment(original, replacement):
         # model-supplied \end_layout/\begin_inset from becoming native syntax.
         return text.replace('\\', '\n\\backslash\n')
 
-    result = []
-    for paragraph in paragraphs:
+    result, depth = [], 0
+    matched = len(paragraphs) == len(originals)
+    uniform = len({(p.layout, p.depth) for p in originals}) == 1
+    pairs = [('', p, True, True) for p in leading]
+    pairs.extend((text, originals[i] if matched else originals[0] if uniform else NativeParagraph('Standard', ''),
+                  matched or i == 0, matched) for i, text in enumerate(paragraphs))
+    pairs.extend(('', p, True, True) for p in trailing)
+    for paragraph, base, keep_metadata, keep_depth in pairs:
+        target_depth = base.depth if keep_depth else 0
+        while depth != target_depth:
+            result.append('\\begin_deeper\n' if depth < target_depth else '\\end_deeper\n')
+            depth += 1 if depth < target_depth else -1
+        styles = []
+        for line in base.body.splitlines():
+            if not line.strip():
+                continue
+            if re.fullmatch(r'\\(?:lang|series|shape|family|size|color|emph) [\w-]+', line):
+                styles.append(line)
+            elif not line.startswith('\\') or line.startswith('\\begin_inset'):
+                break
+        metadata = ''.join(raw + '\n' for _, _, raw in body_insets(base.body)
+                           if raw.startswith(('\\begin_inset Argument ', '\\begin_inset CommandInset label\n'))) if keep_metadata else ''
         chunks = []
         for item in re.split(r'(LYXAIMATHPLACEHOLDER\d+END)', paragraph):
             if re.fullmatch(r'LYXAIMATHPLACEHOLDER\d+END', item):
                 chunks.append('\n' + objects[int(item[len('LYXAIMATHPLACEHOLDER'):-3])] + '\n\n')
             else:
                 chunks.append(plain(item))
-        result.append('\\begin_layout ' + layouts[0] + '\n' + '\n'.join(initial_style) + '\n' + ''.join(chunks) + '\n\\end_layout\n')
+        result.append('\\begin_layout ' + base.layout + '\n' + '\n'.join(styles) + '\n' + metadata + ''.join(chunks) + '\n\\end_layout\n')
+    result.extend('\\end_deeper\n' for _ in range(depth))
     return original.split(r'\begin_body', 1)[0] + '\\begin_body\n\n' + '\n'.join(result) + '\n\\end_body\n\\end_document\n'

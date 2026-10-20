@@ -139,6 +139,12 @@ def check_window(app, report_path):
         for editor in (w.answer, passage.editor, history.reply):
             foreground = editor.palette().color(QPalette.ColorRole.Text)
             assert max(foreground.red(), foreground.green(), foreground.blue()) < 130, foreground.name()
+        prompt_color = w.prompt_panel.grab().toImage().pixelColor(10, 10)
+        assert prompt_color.blue() > prompt_color.red() > prompt_color.green(), prompt_color.name()
+        original_prompt = dict(w.config['templates'][w.templates.currentIndex()])
+        w.prompt.setPlainText('Custom prompt {selection}')
+        assert w.config['templates'][w.templates.currentIndex()]['id'].startswith('custom.')
+        assert next(t for t in w.config['templates'] if t['id'] == original_prompt['id']) == original_prompt
         assert history.reply.toPlainText() == 'AI answer only'
         assert history.question.toPlainText() == 'Question kept separately'
         assert history.size().toTuple() == (640, 480), history.size().toTuple()
@@ -150,7 +156,8 @@ def check_window(app, report_path):
         passage.reject()
         app.setPalette(original_palette)
         report.update(small_windows=sizes, one_line_status=True, settings_fit=True, passage_dialog=True,
-                      separate_history_reply=True, dark_palette_backgrounds=backgrounds, passed=True)
+                      separate_history_reply=True, dark_palette_backgrounds=backgrounds,
+                      highlighted_prompt=prompt_color.name(), immutable_builtin_prompt=True, passed=True)
         w.close()
         import shiboken6
         shiboken6.delete(history)

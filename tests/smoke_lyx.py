@@ -48,6 +48,18 @@ def clipboard_html():
         u.CloseClipboard()
 
 
+def export_latex(server, path):
+    server.command('buffer-export', 'pdflatex ' + str(path).replace('\\', '/'))
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if path.exists():
+            text = path.read_text(encoding='utf-8-sig')
+            if r'\end{document}' in text:
+                return text
+        time.sleep(.02)
+    raise AssertionError('LaTeX export did not complete: ' + str(path))
+
+
 def worker(desktop):
     from lyxai.bridge import LyXServer, load_context, apply_replacement, native_body
     from lyxai.integration import capture_lyx_payload
@@ -259,13 +271,72 @@ def worker(desktop):
                 assert native_body(server.snapshot()) == native_body(baseline_regions)
                 assert regions.read_bytes() == region_disk
                 print('Whole ERT, source interior replacement and caret insertion export real LaTeX; one undo: OK')
+                from lyxai.replacement import native_paragraphs, structured_selection
+                mixed = folder / 'mixed.lyx'
+                shutil.copy2(ROOT / 'examples/mixed-layouts-demo.lyx', mixed)
+                mixed_disk = mixed.read_bytes()
+                server.command('file-open', str(mixed).replace('\\', '/'))
+                mixed_baseline = server.snapshot()
+                select_mixed = 'buffer-begin; paragraph-down; ' + 'paragraph-down-select; ' * 4 + 'line-end-select; copy'
+                server.command('command-sequence', select_mixed)
+                mixed_payload = capture_lyx_payload()
+                mixed_payload.update(load_context(mixed_payload, stem))
+                expected = ['Theorem', 'Proof', 'Standard', 'Theorem', 'Proof']
+                assert [p.layout for p in native_paragraphs(mixed_payload['native'])] == expected, mixed_payload['native']
+                request_target = structured_selection(mixed_payload['native'])
+                assert request_target.count(r'\begin{theorem}') == 2 and request_target.count(r'\begin{proof}') == 2
+                assert r'\fbox{embedded source}' in request_target
+                apply_replacement(mixed_payload, 'First revised theorem $x=2$.\n\nFirst revised proof.\n\nRevised body.\n\nSecond revised theorem.\n\nSecond revised proof.', stem)
+                changed = server.snapshot()
+                assert [p.layout for p in native_paragraphs(changed)] == ['Standard'] + expected + ['Standard'], native_body(changed)
+                assert 'Before mixed selection.' in changed and 'After mixed selection.' in changed
+                server.command('undo')
+                assert native_body(server.snapshot()) == native_body(mixed_baseline)
+                print('Mixed Theorem/Proof/Standard native paragraphs preserve each layout and math; one undo: OK')
+                server.command('command-sequence', select_mixed.replace('line-end-select; ', ''))
+                partial = apply_replacement(mixed_payload, 'Partial theorem.\n\nPartial proof.\n\nPartial body.\n\nPartial second theorem.', stem)
+                assert not partial['layout_fallback']
+                changed = server.snapshot()
+                assert [p.layout for p in native_paragraphs(changed)] == ['Standard'] + expected + ['Standard'], native_body(changed)
+                assert 'Second proof.' in native_paragraphs(changed)[-2].body
+                server.command('undo')
+                assert native_body(server.snapshot()) == native_body(mixed_baseline)
+                print('Empty clipboard boundary preserves the unselected proof paragraph and its layout; one undo: OK')
+                server.command('command-sequence', select_mixed.replace('line-end-select; ', ''))
+                apply_replacement(mixed_payload, r'\begin{theorem}Partial theorem.\end{theorem}\begin{proof}Partial proof.\end{proof}' + '\n\nPartial body.\n\n' + r'\begin{theorem}Partial second theorem.\end{theorem}', stem)
+                changed = server.snapshot()
+                assert [p.layout for p in native_paragraphs(changed)] == ['Standard'] + expected + ['Standard'], native_body(changed)
+                assert 'Second proof.' in native_paragraphs(changed)[-2].body
+                server.command('undo')
+                assert native_body(server.snapshot()) == native_body(mixed_baseline)
+                print('LaTeX import at an empty clipboard boundary preserves the unselected proof; one undo: OK')
+                server.command('command-sequence', select_mixed)
+                mixed_revision = (r'\begin{theorem}[First bound]\label{thm:mixed}First revised theorem $x=2$.\end{theorem}' + '\n\n'
+                                  + r'\begin{proof}First revised proof.\end{proof}' + '\n\nBody ' + '\n```latex\n'
+                                  + r'\fbox{Rendered source}' + '\n```\nand ' + r'\textbf{bold}.' + '\n\n'
+                                  + r'\begin{theorem}Second revised theorem $y=3$.\end{theorem}' + '\n\n'
+                                  + r'\begin{proof}Second revised proof.\end{proof}')
+                apply_replacement(mixed_payload, mixed_revision, stem)
+                changed = server.snapshot()
+                assert [p.layout for p in native_paragraphs(changed) if p.layout != 'Standard'] == ['Theorem', 'Proof', 'Theorem', 'Proof'], native_body(changed)
+                mixed_latex = folder / 'mixed-export.tex'
+                exported = export_latex(server, mixed_latex)
+                assert exported.count(r'\begin{thm}') == 2 and exported.count(r'\begin{proof}') == 2, exported
+                assert r'\label{thm:mixed}' in exported and (r'\fbox{' in exported or r'\fcolorbox{' in exported) and 'Rendered source' in exported, exported
+                assert r'\textbackslash' not in exported, exported
+                server.command('command-sequence', 'buffer-begin; buffer-end-select; copy')
+                assert clipboard_html().count('theorem_label') >= 2
+                server.command('undo')
+                assert native_body(server.snapshot()) == native_body(mixed_baseline)
+                assert mixed.read_bytes() == mixed_disk
+                print('Multiple theorem/proof environments with inline ERT and mixed LaTeX fences export real commands and labels; one undo: OK')
                 engine = shutil.which('pdflatex')
                 if engine:
-                    for name in ('regions-export.tex', 'regions-source-export.tex'):
+                    for name in ('regions-export.tex', 'regions-source-export.tex', 'mixed-export.tex'):
                         result = subprocess.run([engine, '-interaction=nonstopmode', '-halt-on-error', '-no-shell-escape', name], cwd=folder, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=20, creationflags=0x08000000)
                         assert result.returncode == 0, result.stdout.decode('utf-8', 'replace')[-3000:]
                         assert (folder / name.replace('.tex', '.pdf')).exists()
-                    print('Native theorem title/label and ERT formulas compile to PDF with shell escape disabled: OK')
+                    print('Native theorem title/label, ERT formulas and mixed environments compile to PDF with shell escape disabled: OK')
         finally:
             proc.terminate()
             proc.wait(timeout=5)
@@ -305,7 +376,7 @@ def check():
         try:
             start = subprocess.STARTUPINFO()
             start.lpDesktop = name
-            result = subprocess.run([sys.executable, '-u', str(Path(__file__).resolve()), '--worker', name], startupinfo=start, capture_output=True, timeout=50, creationflags=0x08000000)
+            result = subprocess.run([sys.executable, '-u', str(Path(__file__).resolve()), '--worker', name], startupinfo=start, capture_output=True, timeout=90, creationflags=0x08000000)
             print(result.stdout.decode('utf-8', errors='replace'))
             if result.returncode:
                 raise RuntimeError(result.stderr.decode('utf-8', errors='replace'))
@@ -326,7 +397,7 @@ def check():
             u.SetProcessWindowStation(original)
         start = subprocess.STARTUPINFO()
         start.lpDesktop = name + '\\default'
-        subprocess.run([sys.executable, '-u', str(Path(__file__).resolve()), '--worker', start.lpDesktop], startupinfo=start, check=True, timeout=50, creationflags=0x08000000)
+        subprocess.run([sys.executable, '-u', str(Path(__file__).resolve()), '--worker', start.lpDesktop], startupinfo=start, check=True, timeout=90, creationflags=0x08000000)
     finally:
         if desktop:
             u.CloseDesktop(desktop)
