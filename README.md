@@ -1,8 +1,12 @@
-# LyX AI
+# LyX AI - AI Plugin for LyX
 
 **让 AI 读懂正文上下文，把修改后的文字与公式直接写回 LyX。**
 
 **简体中文** · [English](README.en.md)
+
+> **致谢与项目说明：** 感谢 [LyX](https://www.lyx.org/) 开发者、贡献者及社区。LyX AI 是独立维护的非官方开源插件，与 LyX 项目无隶属关系，也不代表其官方认可或支持。
+>
+> **免责声明：** 本插件按“现状”提供，不作任何担保，详见 [MIT 许可证](LICENSE)。请在应用 AI 修改前备份文档，并核对内容、公式和排版；发送给 AI 的文本由你配置的第三方服务处理，请留意其数据政策。
 
 ![LyX AI：自动正文上下文、Markdown 与公式预览、全局应用按钮](docs/images/main-zh.png)
 

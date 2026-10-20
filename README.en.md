@@ -1,8 +1,12 @@
-# LyX AI
+# LyX AI - AI Plugin for LyX
 
 **Give AI the surrounding prose, then apply revised text and editable equations directly in LyX.**
 
 [简体中文](README.md) · **English**
+
+> **Acknowledgements and project status:** Thank you to the [LyX](https://www.lyx.org/) developers, contributors and community. LyX AI is an independently maintained, unofficial open-source plugin. It is not affiliated with, endorsed by or officially supported by the LyX project.
+>
+> **Disclaimer:** This plugin is provided “as is”, without warranty; see the [MIT License](LICENSE). Back up your document and review content, equations and formatting before applying AI revisions. Text sent to AI is processed by your configured third-party service; review its data policy.
 
 ![LyX AI with automatic body context, Markdown and equation preview, and the global Apply button](docs/images/main-en.png)
 
